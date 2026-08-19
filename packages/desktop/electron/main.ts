@@ -103,6 +103,10 @@ function createWindow(): void {
   win.on('closed', () => {
     win = null
   })
+  // 记录窗口关闭时机（区分手动关闭与异常）
+  win.on('close', () => {
+    console.error(`[main] window close requested at ${new Date().toISOString()}`)
+  })
 
   // 崩溃/异常诊断与自动恢复
   win.webContents.on('render-process-gone', (_e, details) => {
@@ -197,6 +201,11 @@ void app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  console.error(`[main] all windows closed at ${new Date().toISOString()}`)
   lan?.stop()
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  console.error(`[main] app quitting at ${new Date().toISOString()}`)
 })

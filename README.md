@@ -117,4 +117,7 @@ IndexedDB(idb) · @noble/ed25519 · cropperjs · electron-builder
 
 ## License
 
-MIT
+MIT © [Hina_MRZ (Apoil)](https://github.com/Apoil)
+
+本项目为开源软件，采用 [MIT License](LICENSE)：允许自由使用、修改、分发与商用，
+但**必须保留原始版权与许可声明**（注明源作者 Hina_MRZ / Apoil）。
