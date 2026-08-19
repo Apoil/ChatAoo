@@ -1,15 +1,20 @@
 /**
  * 共享 Pinia store：把 ChatSession 的业务事件镜像为响应式状态。
  * 桌面端与移动端共用。
+ *
+ * 注意：session 必须用 shallowRef —— 若用 ref 深响应式包装，组件通过
+ * `store.session.login()` 等方法调用时 `this` 会绑定到 Proxy 包装的实例，
+ * 导致 `this.identity` 等属性变成不可克隆的 Proxy 对象，写入 IndexedDB
+ * 时抛 "could not be cloned"。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import type { ChatSession, FriendRecord } from '@chataoo/app-core'
 import type { Conversation, Message, Profile } from '@chataoo/shared'
 import type { LanPeerInfo } from '@chataoo/app-core'
 
 export const useChatStore = defineStore('chat', () => {
-  const session = ref<ChatSession | null>(null)
+  const session = shallowRef<ChatSession | null>(null)
   const ready = ref(false)
   const authed = ref(false)
   const online = ref(false)
