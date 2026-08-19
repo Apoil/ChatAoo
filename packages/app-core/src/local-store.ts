@@ -45,6 +45,35 @@ const DB_VERSION = 1
 export class LocalStore {
   private constructor(private db: IDBPDatabase<Schema>) {}
 
+  /**
+   * 统一写入口：任何不可克隆的值（函数/循环引用/代理对象等）都会
+   * 在这里被捕获，记录确切位置并尝试 JSON 清洗降级，避免应用崩溃。
+   */
+  private async putSafe(
+    storeName: 'kv' | 'conversations' | 'messages' | 'profiles' | 'friends' | 'outbox' | 'cursors',
+    value: unknown,
+    key?: IDBValidKey,
+    context = '',
+  ): Promise<void> {
+    try {
+      await (this.db as IDBPDatabase).put(storeName, value, key as never)
+    } catch (e) {
+      console.error(
+        `[store] IDB put 失败 store=${storeName} ${context}：${e instanceof Error ? e.message : String(e)}`,
+        'value=', value,
+      )
+      // 降级：JSON 清洗（丢弃 undefined/函数；循环引用会再抛并保留原始错误）
+      try {
+        const cleaned = JSON.parse(JSON.stringify(value))
+        console.warn(`[store] 已用 JSON 清洗写入 store=${storeName} ${context}`)
+        await (this.db as IDBPDatabase).put(storeName, cleaned, key as never)
+      } catch (e2) {
+        console.error(`[store] JSON 清洗失败（疑似循环引用）store=${storeName} ${context}：`, e2)
+        throw e
+      }
+    }
+  }
+
   static async open(): Promise<LocalStore> {
     const db = await openDB<Schema>(DB_NAME, DB_VERSION, {
       upgrade(d) {
@@ -76,7 +105,7 @@ export class LocalStore {
   }
 
   async kvSet(key: string, value: unknown): Promise<void> {
-    await this.db.put('kv', value, key)
+    await this.putSafe('kv', value, key, `key=${key}`)
   }
 
   async kvDel(key: string): Promise<void> {
@@ -86,7 +115,7 @@ export class LocalStore {
   /* ---------------- 会话 ---------------- */
 
   async convPut(c: Conversation): Promise<void> {
-    await this.db.put('conversations', c)
+    await this.putSafe('conversations', c, undefined, `id=${c.id}`)
   }
 
   async convGet(id: string): Promise<Conversation | undefined> {
@@ -126,7 +155,7 @@ export class LocalStore {
   /* ---------------- 消息 ---------------- */
 
   async msgPut(m: Message): Promise<void> {
-    await this.db.put('messages', m)
+    await this.putSafe('messages', m, undefined, `id=${m.id} conv=${m.conversationId}`)
   }
 
   async msgGet(id: string): Promise<Message | undefined> {
@@ -166,7 +195,7 @@ export class LocalStore {
   /* ---------------- 资料 ---------------- */
 
   async profPut(p: Profile): Promise<void> {
-    await this.db.put('profiles', p)
+    await this.putSafe('profiles', p, undefined, `userId=${p.userId}`)
   }
 
   async profGet(userId: string): Promise<Profile | undefined> {
@@ -181,7 +210,7 @@ export class LocalStore {
   /* ---------------- 好友 ---------------- */
 
   async friendPut(f: FriendRecord): Promise<void> {
-    await this.db.put('friends', f)
+    await this.putSafe('friends', f, undefined, `userId=${f.userId}`)
   }
 
   async friendGet(userId: string): Promise<FriendRecord | undefined> {
@@ -197,7 +226,7 @@ export class LocalStore {
   async outboxAdd(m: Message): Promise<void> {
     const existing = await this.db.get('outbox', m.id)
     if (existing) return
-    await this.db.put('outbox', { message: m, attempt: 0, addedAt: Date.now() })
+    await this.putSafe('outbox', { message: m, attempt: 0, addedAt: Date.now() }, undefined, `id=${m.id}`)
   }
 
   async outboxList(): Promise<OutboxEntry[]> {
@@ -212,7 +241,7 @@ export class LocalStore {
     const e = await this.db.get('outbox', id)
     if (!e) return
     e.attempt += 1
-    await this.db.put('outbox', e)
+    await this.putSafe('outbox', e, undefined, `id=${id}`)
   }
 
   /* ---------------- 同步游标 ---------------- */
@@ -222,7 +251,7 @@ export class LocalStore {
   }
 
   async cursorSet(key: string, value: number): Promise<void> {
-    await this.db.put('cursors', value, key)
+    await this.putSafe('cursors', value, key, `key=${key}`)
   }
 
   async close(): Promise<void> {

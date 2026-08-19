@@ -115,8 +115,9 @@ function createWindow(): void {
   win.webContents.on('unresponsive', () => {
     console.error('renderer unresponsive')
   })
-  win.webContents.on('console-message', (_e, level, message) => {
-    if (level >= 2) console.error(`[renderer] ${message}`)
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    const tag = ['log', 'info', 'warn', 'error'][level] ?? 'log'
+    console.error(`[renderer:${tag}] ${message} (${sourceId ?? ''}:${line ?? ''})`)
   })
 }
 
