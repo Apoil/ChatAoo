@@ -197,6 +197,13 @@ export class ChatSession {
       avatarHash: user.avatarHash,
       updatedAt: Date.now(),
     })
+    this.bus.emit('profile', {
+      userId: identity.userId,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      avatarHash: user.avatarHash,
+      updatedAt: Date.now(),
+    })
     this.authed = true
     this.bus.emit('auth', { authed: true })
   }
@@ -426,6 +433,8 @@ export class ChatSession {
     if (url) p.avatarUrl = url
     p.updatedAt = Date.now()
     await this.store.profPut(p)
+    // 同步到 UI store（自己的资料也要进 profiles，头像/昵称才能即时刷新）
+    this.bus.emit('profile', { ...p })
     this.bus.emit('my-avatar', { url, sha256 })
   }
 

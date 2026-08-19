@@ -96,6 +96,9 @@ async function openAttachment(a: Attachment): Promise<void> {
 
       <!-- 聊天区 -->
       <main class="chat">
+        <!-- 顶部标题栏拖拽区（与侧栏标题栏/窗口控件同行） -->
+        <div class="chat-titlebar" />
+
         <template v-if="activeConv && peerId">
           <header class="chat-head">
             <button class="peer" title="查看资料" @click="peerProfileId = peerId">
@@ -226,6 +229,14 @@ async function openAttachment(a: Attachment): Promise<void> {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+/* 与窗口控件同行的整条标题栏：可拖拽移动窗口 */
+.chat-titlebar {
+  height: 44px;
+  flex: none;
+  -webkit-app-region: drag;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-soft);
 }
 .chat-head {
   display: flex;

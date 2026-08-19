@@ -7,10 +7,17 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { LanMain } from './lan.js';
 const MEDIA_SCHEME = 'chataoo-media';
+const APP_SCHEME = 'app';
 // 必须在 app ready 之前注册自定义协议
+//  - app://：生产模式页面加载协议（secure context，crypto.subtle / randomUUID 可用，
+//    避免 file:// 非安全上下文导致头像哈希等能力失效）
+//  - chataoo-media://：本地媒体缓存
 protocol.registerSchemesAsPrivileged([
+    { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
     { scheme: MEDIA_SCHEME, privileges: { secure: true, supportFetchAPI: true, stream: true } },
 ]);
+// 聊天类 UI 无需 GPU 合成加速；禁用可规避部分显卡驱动的渲染进程崩溃
+app.disableHardwareAcceleration();
 let mediaDir = '';
 let lan = null;
 let win = null;
@@ -54,10 +61,27 @@ function createWindow() {
         void win.loadURL(devUrl);
     }
     else {
-        void win.loadFile(join(app.getAppPath(), 'dist', 'index.html'));
+        // 生产模式：通过安全的 app:// 协议加载（secure context）
+        void win.loadURL(`${APP_SCHEME}://bundle/index.html`);
     }
     win.on('closed', () => {
         win = null;
+    });
+    // 崩溃/异常诊断与自动恢复
+    win.webContents.on('render-process-gone', (_e, details) => {
+        console.error('render-process-gone:', JSON.stringify(details));
+        // 崩溃后自动重建窗口恢复
+        setTimeout(() => {
+            if (!win)
+                createWindow();
+        }, 800);
+    });
+    win.webContents.on('unresponsive', () => {
+        console.error('renderer unresponsive');
+    });
+    win.webContents.on('console-message', (_e, level, message) => {
+        if (level >= 2)
+            console.error(`[renderer] ${message}`);
     });
 }
 /* ---------------- 媒体缓存 ---------------- */
@@ -110,6 +134,15 @@ ipcMain.handle('app:saveFile', async (_e, name, url) => {
 });
 /* ---------------- 启动 ---------------- */
 void app.whenReady().then(() => {
+    // 生产模式：app://bundle/ 映射到 dist 目录
+    const distDir = join(app.getAppPath(), 'dist');
+    protocol.handle(APP_SCHEME, (req) => {
+        const url = new URL(req.url);
+        let path = url.pathname === '/' ? '/index.html' : url.pathname;
+        if (!path.startsWith('/'))
+            path = '/' + path;
+        return net.fetch(pathToFileURL(join(distDir, path)).toString());
+    });
     protocol.handle(MEDIA_SCHEME, (req) => {
         const hash = req.url.replace(`${MEDIA_SCHEME}://`, '').split('?')[0] ?? '';
         return net.fetch(pathToFileURL(join(ensureMediaDir(), hash)).toString());

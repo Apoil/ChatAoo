@@ -33,6 +33,7 @@ const profile = computed<Profile | null>(() => {
 const cropping = ref(false)
 const cropSrc = ref('')
 const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarError = ref('')
 
 function pickAvatar(ev: Event): void {
   if (!isSelf.value) return
@@ -42,12 +43,17 @@ function pickAvatar(ev: Event): void {
   if (!file) return
   cropSrc.value = URL.createObjectURL(file)
   cropping.value = true
+  avatarError.value = ''
 }
 
 async function onCropped(blob: Blob): Promise<void> {
   cropping.value = false
-  await store.session?.setAvatar(blob)
-  await store.refreshProfiles()
+  try {
+    await store.session?.setAvatar(blob)
+    await store.refreshProfiles()
+  } catch (e) {
+    avatarError.value = `头像保存失败：${e instanceof Error ? e.message : String(e)}`
+  }
 }
 
 /* 昵称编辑（仅自己） */
@@ -114,6 +120,7 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
         <span v-if="isSelf" class="edit-tip">点击更换头像</span>
         <input ref="avatarInput" type="file" accept="image/*" hidden @change="pickAvatar" />
       </div>
+      <p v-if="avatarError" class="avatar-error">{{ avatarError }}</p>
 
       <div class="name-row">
         <template v-if="isSelf && editingName">
@@ -216,6 +223,12 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
   font-size: 11px;
   color: var(--text-faint);
   white-space: nowrap;
+}
+.avatar-error {
+  color: var(--danger);
+  font-size: 12.5px;
+  margin: 22px 0 0;
+  text-align: center;
 }
 .name-row {
   display: flex;

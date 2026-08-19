@@ -5,6 +5,7 @@
 import {
   LAN_BEACON_INTERVAL_MS,
   PROTOCOL_VERSION,
+  randomNonce,
   sign,
   userIdFromPublicKey,
   verifySignature,
@@ -17,7 +18,7 @@ export function beaconPayload(p: Pick<BeaconPacket, 'userId' | 'displayName' | '
 }
 
 export async function buildBeacon(identity: Identity): Promise<BeaconPacket> {
-  const nonce = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
+  const nonce = randomNonce()
   const ts = Date.now()
   const payload: Omit<BeaconPacket, 'sig'> = {
     v: PROTOCOL_VERSION as 1,
