@@ -15,6 +15,13 @@ const serverUrl = ref(store.session?.serverUrl ?? 'http://127.0.0.1:47800')
 const busy = ref(false)
 const error = ref('')
 
+/** 用户名统一小写（所见即所得，避免大小写歧义） */
+function onUsernameInput(ev: Event): void {
+  const el = ev.target as HTMLInputElement
+  username.value = el.value.toLowerCase()
+  el.value = username.value
+}
+
 async function submit(): Promise<void> {
   const s = store.session
   if (!s || busy.value) return
@@ -51,50 +58,70 @@ async function submit(): Promise<void> {
 
 <template>
   <div class="login">
-    <div class="card">
-      <img :src="logoUrl" class="logo" alt="ChatAoo" />
-      <h1>ChatAoo</h1>
-      <p class="tagline">局域网点对点 · 离线优先聊天</p>
+    <!-- 顶部标题栏：与系统窗口控件同行，可拖拽窗口 -->
+    <div class="titlebar">
+      <img :src="logoUrl" class="tb-logo" alt="" />
+      <span class="tb-name">ChatAoo</span>
+    </div>
 
-      <div class="tabs">
-        <button :class="{ active: mode === 'login' }" @click="mode = 'login'">登录</button>
-        <button :class="{ active: mode === 'register' }" @click="mode = 'register'">注册</button>
+    <div class="body">
+      <div class="hero">
+        <img :src="logoUrl" class="logo" alt="ChatAoo" />
+        <h1>{{ mode === 'login' ? '欢迎回来' : '创建账号' }}</h1>
+        <p class="tagline">局域网点对点 · 离线优先聊天</p>
       </div>
 
-      <div class="form">
-        <div class="field">
-          <label>用户名（好友添加用，3-20 位字母/数字/下划线）</label>
-          <input v-model="username" placeholder="如 alice" autocomplete="username" @keydown.enter="submit" />
-        </div>
-        <div class="field">
-          <label>密码</label>
-          <input
-            v-model="password"
-            type="password"
-            placeholder="至少 6 位"
-            autocomplete="current-password"
-            @keydown.enter="submit"
-          />
-        </div>
-        <div v-if="mode === 'register'" class="field">
-          <label>昵称（展示给好友的名字）</label>
-          <input v-model="displayName" placeholder="如 爱丽丝" @keydown.enter="submit" />
-        </div>
-        <div v-if="allowServerEdit" class="field">
-          <label>服务器地址</label>
-          <input v-model="serverUrl" placeholder="http://192.168.1.10:47800" @keydown.enter="submit" />
+      <div class="panel">
+        <div class="tabs">
+          <button :class="{ active: mode === 'login' }" @click="mode = 'login'">登录</button>
+          <button :class="{ active: mode === 'register' }" @click="mode = 'register'">注册</button>
         </div>
 
-        <p v-if="error" class="error">{{ error }}</p>
+        <div class="form">
+          <div class="field">
+            <input
+              v-model="username"
+              placeholder="用户名"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              @input="onUsernameInput"
+              @keydown.enter="submit"
+            />
+            <span class="field-hint">3-20 位字母 / 数字 / 下划线，自动小写</span>
+          </div>
+          <div class="field">
+            <input
+              v-model="password"
+              type="password"
+              placeholder="密码"
+              autocomplete="current-password"
+              @keydown.enter="submit"
+            />
+            <span v-if="mode === 'register'" class="field-hint">至少 6 位</span>
+          </div>
+          <div v-if="mode === 'register'" class="field">
+            <input
+              v-model="displayName"
+              placeholder="昵称（展示给好友）"
+              maxlength="30"
+              @keydown.enter="submit"
+            />
+          </div>
+          <div v-if="allowServerEdit" class="field">
+            <input v-model="serverUrl" placeholder="服务器地址" spellcheck="false" @keydown.enter="submit" />
+          </div>
 
-        <button class="btn btn-primary submit" :disabled="busy" @click="submit">
-          {{ busy ? '处理中…' : mode === 'login' ? '登录' : '注册并登录' }}
-        </button>
+          <p v-if="error" class="error">{{ error }}</p>
+
+          <button class="btn-primary" :disabled="busy" @click="submit">
+            {{ busy ? '处理中…' : mode === 'login' ? '登 录' : '注册并登录' }}
+          </button>
+        </div>
       </div>
 
       <p class="hint">
-        登录后自动记住登录状态：之后即使完全断网，也能以已登录身份进入，
-        与局域网内的好友点对点聊天。
+        登录后自动记住登录状态：之后即使完全断网，也能以已登录身份进入，与局域网内的好友点对点聊天。
       </p>
     </div>
   </div>
@@ -104,84 +131,146 @@ async function submit(): Promise<void> {
 .login {
   height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background:
-    radial-gradient(1000px 500px at 50% -10%, rgba(51, 144, 236, 0.08), transparent 60%),
-    var(--bg);
-  padding: 20px;
-  overflow-y: auto;
+  flex-direction: column;
+  background: var(--bg);
 }
-.card {
-  width: min(380px, 100%);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 36px 32px 28px;
-  box-shadow: var(--shadow-float);
+/* 标题栏：44px，与系统窗口按钮同行；品牌融入，可拖拽 */
+.titlebar {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  -webkit-app-region: drag;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+.tb-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+.tb-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
+.body {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding: 12px 24px 16px;
+  overflow-y: auto;
+}
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 8px 0 16px;
 }
 .logo {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
 }
 h1 {
-  margin: 14px 0 2px;
-  font-size: 22px;
-  letter-spacing: 0.4px;
+  margin: 12px 0 2px;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }
 .tagline {
-  margin: 0 0 22px;
-  color: var(--text-dim);
-  font-size: 12.5px;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+/* 面板：与窗口同宽，紧凑对话框式 */
+.panel {
+  width: 100%;
+  max-width: 392px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
 }
 .tabs {
   display: flex;
-  gap: 6px;
-  width: 100%;
+  gap: 4px;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 4px;
-  margin-bottom: 20px;
+  border-radius: 10px;
+  padding: 3px;
+  margin-bottom: 14px;
 }
 .tabs button {
   flex: 1;
-  padding: 8px 0;
-  border-radius: var(--radius-sm);
+  padding: 7px 0;
+  border-radius: 8px;
   color: var(--text-dim);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   transition: background 0.15s, color 0.15s;
 }
 .tabs button.active {
-  background: var(--bg-raised);
+  background: var(--bg-active);
   color: var(--text);
 }
 .form {
-  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+}
+.field input {
+  width: 100%;
+  height: 42px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 14px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.field input:focus {
+  border-color: var(--accent);
+}
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  padding-left: 2px;
 }
 .error {
   color: var(--danger);
   font-size: 12.5px;
   margin: 0;
 }
-.submit {
+.btn-primary {
   width: 100%;
-  padding: 11px 0;
+  height: 42px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
   font-size: 14px;
-  margin-top: 4px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  transition: background 0.15s, opacity 0.15s;
+}
+.btn-primary:hover {
+  background: #2f82d8;
+}
+.btn-primary:disabled {
+  opacity: 0.5;
 }
 .hint {
-  margin: 18px 0 0;
+  margin: 14px 0 0;
+  max-width: 392px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.6;
   text-align: center;
 }

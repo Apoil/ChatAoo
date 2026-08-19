@@ -80,13 +80,14 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
 
   /* ---------------- 认证 ---------------- */
 
-  /** 注册：创建账号并绑定本设备身份 */
+  /** 注册：创建账号并绑定本设备身份（用户名统一小写） */
   app.post('/api/v1/auth/register', async (req, reply) => {
     const body = req.body as { userId?: string; publicKey?: string; displayName?: string; username?: string; password?: string }
     if (!body.userId || !body.publicKey || !body.displayName || !body.username || !body.password) {
       return reply.code(400).send({ error: 'userId/publicKey/displayName/username/password required' })
     }
-    if (!USERNAME_RE.test(body.username)) {
+    const username = body.username.trim().toLowerCase()
+    if (!USERNAME_RE.test(username)) {
       return reply.code(400).send({ error: '用户名需为 3-20 位字母/数字/下划线' })
     }
     if (body.password.length < 6) {
@@ -95,11 +96,11 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     if (!verifyUserId(body.userId, body.publicKey)) {
       return reply.code(400).send({ error: 'userId does not match publicKey' })
     }
-    if (db.userByUsername(body.username)) return reply.code(409).send({ error: '用户名已被占用' })
+    if (db.userByUsername(username)) return reply.code(409).send({ error: '用户名已被占用' })
     if (db.getUser(body.userId)) return reply.code(409).send({ error: '该设备已注册过账号' })
     db.createUser({
       userId: body.userId,
-      username: body.username,
+      username,
       passwordHash: hashPassword(body.password),
       displayName: body.displayName,
       createdAt: Date.now(),
@@ -111,13 +112,14 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     return res
   })
 
-  /** 登录：用户名 + 密码（在线）；离线时无法登录，但已保存的登录状态可直接离线使用 */
+  /** 登录：用户名 + 密码（用户名不区分大小写）；离线时无法登录，但已保存的登录状态可直接离线使用 */
   app.post('/api/v1/auth/login', async (req, reply) => {
     const body = req.body as { username?: string; password?: string }
     if (!body.username || !body.password) {
       return reply.code(400).send({ error: 'username/password required' })
     }
-    const account = db.userByUsername(body.username)
+    const username = body.username.trim().toLowerCase()
+    const account = db.userByUsername(username)
     if (!account || !account.passwordHash || !verifyPassword(body.password, account.passwordHash)) {
       return reply.code(401).send({ error: '用户名或密码错误' })
     }
@@ -135,7 +137,8 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     if (!verifyUserId(body.userId, body.publicKey)) {
       return reply.code(400).send({ error: 'userId does not match publicKey' })
     }
-    const account = db.userByUsername(body.username)
+    const username = body.username.trim().toLowerCase()
+    const account = db.userByUsername(username)
     if (!account || !account.passwordHash || !verifyPassword(body.password, account.passwordHash)) {
       return reply.code(401).send({ error: '用户名或密码错误' })
     }
@@ -143,17 +146,18 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
       return reply.code(400).send({ error: '该设备已是账号绑定设备' })
     }
     // 重绑定：账号 userId 切换到新设备身份，旧设备全部 token 失效（旧数据保留但不再关联）
-    db.rebindUser(body.username, account.userId, body.userId, account.displayName)
+    db.rebindUser(username, account.userId, body.userId, account.displayName)
     const token = newToken()
     db.createToken(token, body.userId)
     const user = db.getUser(body.userId)!
     return { token, user: toServerUser(user) }
   })
 
-  /** 用户名解析（加好友前查询） */
+  /** 用户名解析（加好友前查询；不区分大小写） */
   app.get<{ Querystring: { username?: string } }>('/api/v1/users/resolve', async (req, reply) => {
-    const username = req.query.username
-    if (!username) return reply.code(400).send({ error: 'username required' })
+    const raw = req.query.username
+    if (!raw) return reply.code(400).send({ error: 'username required' })
+    const username = raw.trim().toLowerCase()
     const u = db.userByUsername(username)
     if (!u || !u.userId) return reply.code(404).send({ error: '用户不存在' })
     const res: ResolvedUser = {
