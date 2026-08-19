@@ -109,7 +109,8 @@ async function submit(): Promise<void> {
   background:
     radial-gradient(1000px 500px at 50% -10%, rgba(51, 144, 236, 0.08), transparent 60%),
     var(--bg);
-  padding: 24px;
+  padding: 20px;
+  overflow-y: auto;
 }
 .card {
   width: min(380px, 100%);

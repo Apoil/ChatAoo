@@ -77,8 +77,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="cropper-modal" @click.self="emit('close')">
-    <div class="cropper-card">
+  <div class="avatar-crop-modal" @click.self="emit('close')">
+    <div class="avatar-crop-card">
       <h3>{{ title ?? '裁剪图片' }}</h3>
       <div class="img-box">
         <img ref="imgEl" :src="src" alt="" draggable="false" />

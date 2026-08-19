@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { ChatSession } from '@chataoo/app-core'
 import {
   AddFriendBox,
@@ -38,6 +38,14 @@ onMounted(async () => {
     if (last) void store.openConversation(last.id)
   }
 })
+
+// 登录状态 ↔ 窗口尺寸：登录小窗 / 聊天大窗
+watch(
+  () => store.authed,
+  (a) => {
+    void window.chataoo?.win.resize(a ? 'chat' : 'login')
+  },
+)
 
 async function openAttachment(a: Attachment): Promise<void> {
   const url = await session.attachmentUrlOf(a)

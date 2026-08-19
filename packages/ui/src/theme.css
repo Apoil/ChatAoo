@@ -199,17 +199,17 @@ textarea {
   margin: 8px 16px;
 }
 
-/* cropper 覆层 */
-.cropper-modal {
+/* 头像裁剪弹窗（类名避开 cropperjs 内部的 .cropper-modal，防止样式污染） */
+.avatar-crop-modal {
   position: fixed;
   inset: 0;
-  background: rgba(8, 10, 14, 0.97);
+  background: #0a0c11;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
 }
-.cropper-card {
+.avatar-crop-card {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -218,12 +218,12 @@ textarea {
   max-width: min(92vw, 640px);
   width: 100%;
 }
-.cropper-card .img-box {
+.avatar-crop-card .img-box {
   max-height: 420px;
   overflow: hidden;
   border-radius: var(--radius-sm);
 }
-.cropper-card .img-box img {
+.avatar-crop-card .img-box img {
   max-width: 100%;
   display: block;
 }

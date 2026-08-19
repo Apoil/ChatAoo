@@ -20,6 +20,9 @@ async function bootstrap(): Promise<void> {
 
   const session = await ChatSession.create(platform)
 
+  // 已登录 → 直接放大到聊天窗口；未登录 → 保持登录小窗
+  if (session.authed) void bridge.win.resize('chat')
+
   const app = createApp(App)
   app.use(createPinia())
   app.provide('session', session)

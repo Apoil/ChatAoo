@@ -45,4 +45,7 @@ contextBridge.exposeInMainWorld('chataoo', {
     openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
     saveFile: (name, url) => ipcRenderer.invoke('app:saveFile', name, url),
   },
+  win: {
+    resize: (mode) => ipcRenderer.invoke('win:resize', mode),
+  },
 })

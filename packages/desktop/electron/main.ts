@@ -34,6 +34,26 @@ let mediaDir = ''
 let lan: LanMain | null = null
 let win: BrowserWindow | null = null
 
+/* 窗口尺寸：登录时小窗，登录后放大为聊天窗口 */
+const LOGIN_W = 440
+const LOGIN_H = 640
+const LOGIN_MIN_W = 420
+const LOGIN_MIN_H = 560
+const CHAT_W = 1200
+const CHAT_H = 800
+const CHAT_MIN_W = 940
+const CHAT_MIN_H = 600
+
+/** 切换窗口尺寸（渲染进程在登录状态变化时调用） */
+export function resizeWindow(mode: 'login' | 'chat'): void {
+  if (!win) return
+  const w = mode === 'login' ? LOGIN_W : CHAT_W
+  const h = mode === 'login' ? LOGIN_H : CHAT_H
+  win.setMinimumSize(mode === 'login' ? LOGIN_MIN_W : CHAT_MIN_W, mode === 'login' ? LOGIN_MIN_H : CHAT_MIN_H)
+  win.setSize(w, h)
+  win.center()
+}
+
 function ensureMediaDir(): string {
   mediaDir = join(app.getPath('userData'), 'media')
   mkdirSync(mediaDir, { recursive: true })
@@ -49,10 +69,10 @@ function createWindow(): void {
   const iconPath = iconCandidates.find((p) => existsSync(p))
 
   win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 940,
-    minHeight: 600,
+    width: LOGIN_W,
+    height: LOGIN_H,
+    minWidth: LOGIN_MIN_W,
+    minHeight: LOGIN_MIN_H,
     title: 'ChatAoo',
     backgroundColor: '#111417',
     icon: iconPath,
@@ -149,6 +169,7 @@ ipcMain.handle('app:saveFile', async (_e, name: string, url: string) => {
   writeFileSync(result.filePath, buf)
   void shell.openPath(result.filePath)
 })
+ipcMain.handle('win:resize', (_e, mode: 'login' | 'chat') => resizeWindow(mode))
 
 /* ---------------- 启动 ---------------- */
 

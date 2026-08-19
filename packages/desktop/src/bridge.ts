@@ -33,6 +33,9 @@ export interface ChataooBridge {
     openExternal(url: string): Promise<void>
     saveFile(name: string, url: string): Promise<void>
   }
+  win: {
+    resize(mode: 'login' | 'chat'): Promise<void>
+  }
 }
 
 declare global {
