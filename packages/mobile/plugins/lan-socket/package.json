@@ -1,0 +1,26 @@
+{
+  "name": "@chataoo/lan-socket",
+  "version": "0.1.0",
+  "description": "ChatAoo 局域网 UDP 组播 + TCP JSON 行原生插件（Android）",
+  "main": "dist/plugin.js",
+  "types": "dist/plugin.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/plugin.d.ts",
+      "import": "./dist/plugin.js"
+    }
+  },
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "files": ["dist", "android"],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0"
+  }
+}

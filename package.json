@@ -1,0 +1,20 @@
+{
+  "name": "chataoo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ChatAoo — 局域网点对点 + 离线优先的多端聊天应用 (Vue 3 / Electron / Capacitor)",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=4 build",
+    "typecheck": "pnpm -r typecheck",
+    "dev:server": "pnpm --filter @chataoo/server dev",
+    "dev:desktop": "pnpm --filter @chataoo/desktop dev",
+    "dev:mobile": "pnpm --filter @chataoo/mobile dev",
+    "android:sync": "pnpm --filter @chataoo/mobile cap:sync",
+    "android:build": "pnpm --filter @chataoo/mobile cap:build:apk",
+    "dist:desktop": "pnpm --filter @chataoo/desktop dist"
+  }
+}

@@ -1,0 +1,231 @@
+/**
+ * 离线优先本地存储（IndexedDB，统一桌面/移动端）。
+ * 所有数据先落本地：消息、会话、资料、好友、待同步队列、同步游标。
+ */
+import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import type { Conversation, FriendStatus, Message, Profile } from '@chataoo/shared'
+
+export interface FriendRecord {
+  userId: string
+  status: FriendStatus
+  updatedAt: number
+}
+
+export interface OutboxEntry {
+  message: Message
+  attempt: number
+  addedAt: number
+}
+
+interface Schema extends DBSchema {
+  kv: { key: string; value: unknown }
+  conversations: {
+    key: string
+    value: Conversation
+    indexes: { byUpdatedAt: number }
+  }
+  messages: {
+    key: string
+    value: Message
+    indexes: { byConv: [string, number] }
+  }
+  profiles: {
+    key: string
+    value: Profile
+    indexes: { byUpdatedAt: number }
+  }
+  friends: { key: string; value: FriendRecord }
+  outbox: { key: string; value: OutboxEntry }
+  cursors: { key: string; value: number }
+}
+
+const DB_NAME = 'chataoo'
+const DB_VERSION = 1
+
+export class LocalStore {
+  private constructor(private db: IDBPDatabase<Schema>) {}
+
+  static async open(): Promise<LocalStore> {
+    const db = await openDB<Schema>(DB_NAME, DB_VERSION, {
+      upgrade(d) {
+        if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv')
+        if (!d.objectStoreNames.contains('conversations')) {
+          const s = d.createObjectStore('conversations', { keyPath: 'id' })
+          s.createIndex('byUpdatedAt', 'updatedAt')
+        }
+        if (!d.objectStoreNames.contains('messages')) {
+          const s = d.createObjectStore('messages', { keyPath: 'id' })
+          s.createIndex('byConv', ['conversationId', 'createdAt'])
+        }
+        if (!d.objectStoreNames.contains('profiles')) {
+          const s = d.createObjectStore('profiles', { keyPath: 'userId' })
+          s.createIndex('byUpdatedAt', 'updatedAt')
+        }
+        if (!d.objectStoreNames.contains('friends')) d.createObjectStore('friends', { keyPath: 'userId' })
+        if (!d.objectStoreNames.contains('outbox')) d.createObjectStore('outbox', { keyPath: 'message.id' })
+        if (!d.objectStoreNames.contains('cursors')) d.createObjectStore('cursors')
+      },
+    })
+    return new LocalStore(db)
+  }
+
+  /* ---------------- kv ---------------- */
+
+  async kvGet<T>(key: string): Promise<T | undefined> {
+    return (await this.db.get('kv', key)) as T | undefined
+  }
+
+  async kvSet(key: string, value: unknown): Promise<void> {
+    await this.db.put('kv', value, key)
+  }
+
+  async kvDel(key: string): Promise<void> {
+    await this.db.delete('kv', key)
+  }
+
+  /* ---------------- 会话 ---------------- */
+
+  async convPut(c: Conversation): Promise<void> {
+    await this.db.put('conversations', c)
+  }
+
+  async convGet(id: string): Promise<Conversation | undefined> {
+    return this.db.get('conversations', id)
+  }
+
+  async convs(): Promise<Conversation[]> {
+    const all = await this.db.getAllFromIndex('conversations', 'byUpdatedAt')
+    return all.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /** 会话发生变化：更新预览/时间，可选增加未读 */
+  async convTouch(id: string, preview: string, at: number, unreadDelta = 0): Promise<void> {
+    const c = (await this.convGet(id)) ?? {
+      id,
+      kind: 'direct' as const,
+      peerId: '',
+      lastMessageAt: at,
+      lastMessagePreview: preview,
+      unreadCount: 0,
+      updatedAt: at,
+    }
+    c.lastMessagePreview = preview
+    c.lastMessageAt = at
+    c.updatedAt = at
+    if (unreadDelta > 0) c.unreadCount += unreadDelta
+    await this.convPut(c)
+  }
+
+  async convSetUnread(id: string, count: number): Promise<void> {
+    const c = await this.convGet(id)
+    if (!c) return
+    c.unreadCount = count
+    await this.convPut(c)
+  }
+
+  /* ---------------- 消息 ---------------- */
+
+  async msgPut(m: Message): Promise<void> {
+    await this.db.put('messages', m)
+  }
+
+  async msgGet(id: string): Promise<Message | undefined> {
+    return this.db.get('messages', id)
+  }
+
+  /** 会话内按时间倒序分页 */
+  async msgsIn(conversationId: string, before = Date.now() + 1, limit = 50): Promise<Message[]> {
+    const idx = this.db.transaction('messages').store.index('byConv')
+    let cursor = await idx.openCursor(IDBKeyRange.bound([conversationId, -1], [conversationId, before]))
+    const out: Message[] = []
+    while (cursor && out.length < limit) {
+      out.push(cursor.value)
+      cursor = await cursor.continue()
+    }
+    return out
+  }
+
+  async msgSetStatus(id: string, status: Message['status']): Promise<void> {
+    const m = await this.msgGet(id)
+    if (!m) return
+    m.status = status
+    await this.msgPut(m)
+  }
+
+  /** 遍历全部消息（附件缓存状态回填等场景） */
+  async allMessages(): Promise<Message[]> {
+    return this.db.getAll('messages')
+  }
+
+  /** 按附件内容哈希查找消息 */
+  async messagesByAttachmentSha(sha256: string): Promise<Message[]> {
+    const all = await this.db.getAll('messages')
+    return all.filter((m) => m.attachment?.sha256 === sha256)
+  }
+
+  /* ---------------- 资料 ---------------- */
+
+  async profPut(p: Profile): Promise<void> {
+    await this.db.put('profiles', p)
+  }
+
+  async profGet(userId: string): Promise<Profile | undefined> {
+    return this.db.get('profiles', userId)
+  }
+
+  async profsSince(t: number): Promise<Profile[]> {
+    const all = await this.db.getAllFromIndex('profiles', 'byUpdatedAt')
+    return all.filter((p) => p.updatedAt > t)
+  }
+
+  /* ---------------- 好友 ---------------- */
+
+  async friendPut(f: FriendRecord): Promise<void> {
+    await this.db.put('friends', f)
+  }
+
+  async friendGet(userId: string): Promise<FriendRecord | undefined> {
+    return this.db.get('friends', userId)
+  }
+
+  async friendsList(): Promise<FriendRecord[]> {
+    return (await this.db.getAll('friends')).sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /* ---------------- 待同步队列 ---------------- */
+
+  async outboxAdd(m: Message): Promise<void> {
+    const existing = await this.db.get('outbox', m.id)
+    if (existing) return
+    await this.db.put('outbox', { message: m, attempt: 0, addedAt: Date.now() })
+  }
+
+  async outboxList(): Promise<OutboxEntry[]> {
+    return (await this.db.getAll('outbox')).sort((a, b) => a.addedAt - b.addedAt)
+  }
+
+  async outboxRemove(id: string): Promise<void> {
+    await this.db.delete('outbox', id)
+  }
+
+  async outboxBump(id: string): Promise<void> {
+    const e = await this.db.get('outbox', id)
+    if (!e) return
+    e.attempt += 1
+    await this.db.put('outbox', e)
+  }
+
+  /* ---------------- 同步游标 ---------------- */
+
+  async cursorGet(key: string): Promise<number> {
+    return (await this.db.get('cursors', key)) ?? 0
+  }
+
+  async cursorSet(key: string, value: number): Promise<void> {
+    await this.db.put('cursors', value, key)
+  }
+
+  async close(): Promise<void> {
+    this.db.close()
+  }
+}

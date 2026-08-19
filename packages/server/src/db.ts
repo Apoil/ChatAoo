@@ -1,0 +1,307 @@
+/**
+ * SQLite 存储层（Node 24 内置 node:sqlite，零原生依赖）。
+ * 注意：node:sqlite 返回的行键名与列名完全一致，因此 schema 直接使用驼峰列名，
+ * 与 TypeScript 类型一一对应。
+ */
+import { DatabaseSync } from 'node:sqlite'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import type {
+  Attachment,
+  FriendStatus,
+  Message,
+  MessageKind,
+  Profile,
+} from '@chataoo/shared'
+
+export interface Db {
+  db: DatabaseSync
+  close(): void
+  /* 用户 */
+  upsertUser(u: {
+    userId: string
+    displayName: string
+    avatarUrl?: string
+    avatarHash?: string
+    statusText?: string
+    createdAt: number
+  }): void
+  getUser(userId: string): UserRow | undefined
+  updateUserProfile(userId: string, patch: { avatarUrl?: string; avatarHash?: string; statusText?: string }): void
+  touchUser(userId: string): void
+  /* token */
+  createToken(token: string, userId: string): void
+  userForToken(token: string): string | undefined
+  /* 好友 */
+  friendStatus(a: string, b: string): FriendStatus
+  requestFriend(a: string, b: string): { status: FriendStatus; updatedAt: number }
+  acceptFriend(a: string, b: string): void
+  listFriends(userId: string): FriendRow[]
+  /* 消息 */
+  insertMessage(m: Message, seq: number): void
+  messagesSince(since: number): MessageRow[]
+  messagesInConversation(conversationId: string, before: number, limit: number): MessageRow[]
+  messageExists(id: string): boolean
+  messageSeq(id: string): number | undefined
+  maxSeq(): number
+  /* 文件 */
+  insertFile(f: FileRow): void
+  fileById(id: string): FileRow | undefined
+  /* 工具 */
+  transaction<T>(fn: () => T): T
+}
+
+export interface UserRow {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  avatarHash: string | null
+  statusText: string | null
+  serverSeq: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface FriendRow {
+  a: string
+  b: string
+  status: string
+  updatedAt: number
+}
+
+export interface MessageRow {
+  id: string
+  conversationId: string
+  senderId: string
+  kind: string
+  text: string | null
+  attachment: string | null
+  createdAt: number
+  seq: number
+}
+
+export interface FileRow {
+  id: string
+  ownerId: string
+  sha256: string
+  kind: string
+  name: string
+  mime: string
+  size: number
+  path: string
+  createdAt: number
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  userId TEXT PRIMARY KEY,
+  displayName TEXT NOT NULL,
+  avatarUrl TEXT,
+  avatarHash TEXT,
+  statusText TEXT,
+  serverSeq INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tokens (
+  token TEXT PRIMARY KEY,
+  userId TEXT NOT NULL,
+  createdAt INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS friends (
+  a TEXT NOT NULL,
+  b TEXT NOT NULL,
+  status TEXT NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  PRIMARY KEY (a, b)
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  conversationId TEXT NOT NULL,
+  senderId TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  text TEXT,
+  attachment TEXT,
+  createdAt INTEGER NOT NULL,
+  seq INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(seq);
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversationId, createdAt);
+CREATE TABLE IF NOT EXISTS files (
+  id TEXT PRIMARY KEY,
+  ownerId TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  createdAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_files_sha ON files(sha256);
+`
+
+function rowToMessage(r: MessageRow): Message {
+  const m: Message = {
+    id: r.id,
+    conversationId: r.conversationId,
+    senderId: r.senderId,
+    kind: r.kind as MessageKind,
+    createdAt: r.createdAt,
+    status: 'delivered',
+    seq: r.seq,
+  }
+  if (r.text !== null) m.text = r.text
+  if (r.attachment !== null) m.attachment = JSON.parse(r.attachment) as Attachment
+  return m
+}
+
+export function openDb(dataDir: string): Db {
+  mkdirSync(dataDir, { recursive: true })
+  const db = new DatabaseSync(join(dataDir, 'chataoo.db'))
+  // 使用默认 DELETE journal（而非 WAL）：Windows 上 node:sqlite 的 WAL 存在
+  // 跨进程读一致性问题（其他连接读不到未 checkpoint 的数据），本应用写量不大，
+  // DELETE 模式即时可见、行为可预期。
+  db.exec('PRAGMA journal_mode = DELETE;')
+  db.exec(SCHEMA)
+
+  const stmt = {
+    upsertUser: db.prepare(
+      `INSERT INTO users (userId, displayName, avatarUrl, avatarHash, statusText, serverSeq, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(userId) DO UPDATE SET
+         displayName = excluded.displayName,
+         avatarUrl = COALESCE(excluded.avatarUrl, users.avatarUrl),
+         avatarHash = COALESCE(excluded.avatarHash, users.avatarHash),
+         statusText = COALESCE(excluded.statusText, users.statusText),
+         updatedAt = excluded.updatedAt`,
+    ),
+    getUser: db.prepare('SELECT * FROM users WHERE userId = ?'),
+    updateProfile: db.prepare(
+      `UPDATE users SET avatarUrl = COALESCE(?, avatarUrl), avatarHash = COALESCE(?, avatarHash),
+         statusText = COALESCE(?, statusText), updatedAt = ? WHERE userId = ?`,
+    ),
+    touchUser: db.prepare('UPDATE users SET updatedAt = ? WHERE userId = ?'),
+    createToken: db.prepare('INSERT INTO tokens (token, userId, createdAt) VALUES (?, ?, ?)'),
+    userForToken: db.prepare('SELECT userId FROM tokens WHERE token = ?'),
+    friendRow: db.prepare('SELECT * FROM friends WHERE a = ? AND b = ?'),
+    insertFriend: db.prepare('INSERT OR REPLACE INTO friends (a, b, status, updatedAt) VALUES (?, ?, ?, ?)'),
+    listFriends: db.prepare('SELECT * FROM friends WHERE (a = ? OR b = ?) ORDER BY updatedAt DESC'),
+    insertMessage: db.prepare(
+      `INSERT OR IGNORE INTO messages (id, conversationId, senderId, kind, text, attachment, createdAt, seq)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ),
+    messagesSince: db.prepare('SELECT * FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT 500'),
+    messagesInConv: db.prepare(
+      `SELECT * FROM messages WHERE conversationId = ? AND createdAt < ? ORDER BY createdAt DESC LIMIT ?`,
+    ),
+    messageExists: db.prepare('SELECT id FROM messages WHERE id = ?'),
+    messageSeq: db.prepare('SELECT seq FROM messages WHERE id = ?'),
+    maxSeq: db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages'),
+    insertFile: db.prepare(
+      `INSERT INTO files (id, ownerId, sha256, kind, name, mime, size, path, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ),
+    fileById: db.prepare('SELECT * FROM files WHERE id = ?'),
+  }
+
+  return {
+    db,
+    close: () => db.close(),
+    upsertUser: (u) =>
+      stmt.upsertUser.run(
+        u.userId,
+        u.displayName,
+        u.avatarUrl ?? null,
+        u.avatarHash ?? null,
+        u.statusText ?? null,
+        0,
+        u.createdAt,
+        u.createdAt,
+      ),
+    getUser: (userId) => stmt.getUser.get(userId) as UserRow | undefined,
+    updateUserProfile: (userId, patch) =>
+      stmt.updateProfile.run(
+        patch.avatarUrl ?? null,
+        patch.avatarHash ?? null,
+        patch.statusText ?? null,
+        Date.now(),
+        userId,
+      ),
+    touchUser: (userId) => stmt.touchUser.run(Date.now(), userId),
+    createToken: (token, userId) => stmt.createToken.run(token, userId, Date.now()),
+    userForToken: (token) => (stmt.userForToken.get(token) as { userId: string } | undefined)?.userId,
+    friendStatus: (a, b) => {
+      const r = stmt.friendRow.get(a, b) as FriendRow | undefined
+      if (r) {
+        if (r.status === 'pending') return 'outgoing'
+        return 'friends'
+      }
+      const rev = stmt.friendRow.get(b, a) as FriendRow | undefined
+      if (rev) {
+        if (rev.status === 'pending') return 'incoming'
+        return 'friends'
+      }
+      return 'none'
+    },
+    requestFriend: (a, b) => {
+      const now = Date.now()
+      const rev = stmt.friendRow.get(b, a) as FriendRow | undefined
+      if (rev?.status === 'pending') {
+        // 对方已向我发起请求 -> 立即互相确认
+        stmt.insertFriend.run(a, b, 'confirmed', now)
+        stmt.insertFriend.run(b, a, 'confirmed', now)
+        return { status: 'friends', updatedAt: now }
+      }
+      stmt.insertFriend.run(a, b, 'pending', now)
+      return { status: 'outgoing', updatedAt: now }
+    },
+    acceptFriend: (a, b) => {
+      const now = Date.now()
+      stmt.insertFriend.run(a, b, 'confirmed', now)
+      stmt.insertFriend.run(b, a, 'confirmed', now)
+    },
+    listFriends: (userId) => stmt.listFriends.all(userId, userId) as unknown as FriendRow[],
+    insertMessage: (m, seq) =>
+      stmt.insertMessage.run(
+        m.id,
+        m.conversationId,
+        m.senderId,
+        m.kind,
+        m.text ?? null,
+        m.attachment ? JSON.stringify(m.attachment) : null,
+        m.createdAt,
+        seq,
+      ),
+    messagesSince: (since) => stmt.messagesSince.all(since) as unknown as MessageRow[],
+    messagesInConversation: (conversationId, before, limit) =>
+      stmt.messagesInConv.all(conversationId, before, limit) as unknown as MessageRow[],
+    messageExists: (id) => stmt.messageExists.get(id) !== undefined,
+    messageSeq: (id) => (stmt.messageSeq.get(id) as { seq: number } | undefined)?.seq,
+    maxSeq: () => (stmt.maxSeq.get() as { m: number }).m,
+    insertFile: (f) =>
+      stmt.insertFile.run(f.id, f.ownerId, f.sha256, f.kind, f.name, f.mime, f.size, f.path, f.createdAt),
+    fileById: (id) => stmt.fileById.get(id) as FileRow | undefined,
+    transaction: <T>(fn: () => T): T => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const r = fn()
+        db.exec('COMMIT')
+        return r
+      } catch (e) {
+        db.exec('ROLLBACK')
+        throw e
+      }
+    },
+  }
+}
+
+export function toProfile(u: UserRow): Profile {
+  return {
+    userId: u.userId,
+    displayName: u.displayName,
+    avatarUrl: u.avatarUrl ?? undefined,
+    avatarHash: u.avatarHash ?? undefined,
+    statusText: u.statusText ?? undefined,
+    updatedAt: u.updatedAt,
+  }
+}

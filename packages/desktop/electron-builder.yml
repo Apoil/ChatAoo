@@ -1,0 +1,21 @@
+appId: com.chataoo.desktop
+productName: ChatAoo
+directories:
+  output: release
+  buildResources: ../../assets
+files:
+  - dist/**
+  - dist-electron/**
+  - ../../assets/icons/icon.ico
+win:
+  icon: ../../assets/icons/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: ChatAoo
+  artifactName: ChatAoo-Setup-${version}.${ext}

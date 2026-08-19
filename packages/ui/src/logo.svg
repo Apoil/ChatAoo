@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="0.55" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8edf7"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角背景 -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <!-- 聊天气泡 -->
+  <path d="M 96 128
+           A 48 48 0 0 1 144 80
+           H 368
+           A 48 48 0 0 1 416 128
+           V 280
+           A 48 48 0 0 1 368 328
+           H 232
+           L 152 408
+           V 328
+           H 144
+           A 48 48 0 0 1 96 280
+           Z"
+        fill="url(#bubble)"/>
+  <!-- 三点（对话/设备） -->
+  <circle cx="176" cy="204" r="20" fill="#4f46e5"/>
+  <circle cx="256" cy="204" r="20" fill="#7c3aed"/>
+  <circle cx="336" cy="204" r="20" fill="#0ea5e9"/>
+  <!-- 网络连接弧线（点对点） -->
+  <path d="M 388 96 A 160 160 0 0 1 452 220" stroke="#a5f3fc" stroke-width="14" stroke-linecap="round" fill="none" opacity="0.85"/>
+  <circle cx="452" cy="220" r="16" fill="#a5f3fc"/>
+  <path d="M 124 400 A 170 170 0 0 1 60 272" stroke="#a5f3fc" stroke-width="14" stroke-linecap="round" fill="none" opacity="0.6"/>
+  <circle cx="60" cy="272" r="16" fill="#a5f3fc" opacity="0.6"/>
+</svg>
