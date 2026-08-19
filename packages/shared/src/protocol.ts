@@ -16,12 +16,24 @@ export interface AuthResponse {
 
 export interface ServerUser {
   userId: string
+  /** 登录用户名（唯一，好友添加用） */
+  username?: string
   displayName: string
   avatarUrl?: string
   avatarHash?: string
   /** 该用户已收到的最新消息序号（注册时初始化） */
   serverSeq: number
   createdAt: number
+}
+
+/** 用户名查询结果（加好友前解析） */
+export interface ResolvedUser {
+  userId: string
+  username: string
+  displayName: string
+  avatarUrl?: string
+  avatarHash?: string
+  statusText?: string
 }
 
 /** 服务器上的消息（带 seq） */
@@ -49,6 +61,7 @@ export interface ServerProfile {
 /** 好友条目 */
 export interface ServerFriend {
   userId: string
+  username?: string
   displayName: string
   avatarUrl?: string
   avatarHash?: string

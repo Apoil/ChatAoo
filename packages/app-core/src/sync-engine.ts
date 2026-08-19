@@ -44,22 +44,22 @@ export class SyncEngine {
 
   constructor(private deps: SyncDeps) {}
 
-  /** 注册/登录，建立账号与 token */
+  /** 校验已保存的登录状态（有 token 则验证；无 token 保持待登录） */
   async ensureAccount(): Promise<void> {
     const store = this.deps.store
     const api = this.deps.api
-    let token = await store.kvGet<string>('serverToken')
-    if (token) {
-      try {
-        await api.login(token)
-        return
-      } catch {
-        token = undefined
+    const token = await store.kvGet<string>('serverToken')
+    if (!token) return
+    try {
+      const user = await api.me()
+      this.deps.onToken?.(token)
+      if (user.displayName && user.displayName !== this.deps.identity.displayName) {
+        this.deps.identity.displayName = user.displayName
+        await store.kvSet('identity', this.deps.identity)
       }
+    } catch {
+      // 服务器不可达：保持离线模式，已保存的登录状态仍有效（LAN 可用）
     }
-    const res = await api.register(this.deps.identity, this.deps.identity.displayName)
-    await store.kvSet('serverToken', res.token)
-    this.deps.onToken?.(res.token)
   }
 
   async start(): Promise<void> {

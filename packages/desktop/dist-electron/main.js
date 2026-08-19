@@ -32,9 +32,16 @@ function createWindow() {
         minWidth: 940,
         minHeight: 600,
         title: 'ChatAoo',
-        backgroundColor: '#0f1220',
+        backgroundColor: '#111417',
         icon: iconPath,
         autoHideMenuBar: true,
+        // 无边框 + 系统标题栏按钮覆盖层（颜色与主题一致）
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+            color: '#171b20',
+            symbolColor: '#9aa4b1',
+            height: 44,
+        },
         webPreferences: {
             preload: join(app.getAppPath(), 'dist-electron', 'preload.cjs'),
             contextIsolation: true,

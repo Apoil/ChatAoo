@@ -3,6 +3,7 @@
  */
 import type {
   AuthResponse,
+  ResolvedUser,
   ServerFriend,
   ServerMessage,
   ServerToClient,
@@ -59,19 +60,61 @@ export class ServerApi {
 
   /* ---------------- 认证 ---------------- */
 
-  register(identity: { userId: string; publicKey: string }, displayName: string): Promise<AuthResponse> {
+  /** 注册：用户名 + 密码，绑定当前设备身份 */
+  register(
+    identity: { userId: string; publicKey: string },
+    opts: { username: string; password: string; displayName: string },
+  ): Promise<AuthResponse> {
     return this.req<AuthResponse>('/api/v1/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ userId: identity.userId, publicKey: identity.publicKey, displayName }),
+      body: JSON.stringify({
+        userId: identity.userId,
+        publicKey: identity.publicKey,
+        username: opts.username,
+        password: opts.password,
+        displayName: opts.displayName,
+      }),
     })
   }
 
-  async login(token: string): Promise<ServerUser> {
-    const r = await this.req<{ user: ServerUser }>('/api/v1/auth/login', {
+  /** 登录：用户名 + 密码（仅在线可用） */
+  login(opts: { username: string; password: string }): Promise<AuthResponse> {
+    return this.req<AuthResponse>('/api/v1/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ username: opts.username, password: opts.password }),
     })
+  }
+
+  /** 重绑定：新设备用同一账号登录时把账号绑定到本设备身份 */
+  rebind(
+    identity: { userId: string; publicKey: string },
+    opts: { username: string; password: string },
+  ): Promise<AuthResponse> {
+    return this.req<AuthResponse>('/api/v1/auth/rebind', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: opts.username,
+        password: opts.password,
+        userId: identity.userId,
+        publicKey: identity.publicKey,
+      }),
+    })
+  }
+
+  /** 用 token 校验会话（离线场景也调用，失败即离线模式） */
+  async me(): Promise<ServerUser> {
+    const r = await this.req<{ user: ServerUser }>('/api/v1/me')
     return r.user
+  }
+
+  /** 用户名解析（加好友前查询） */
+  resolveUser(username: string): Promise<ResolvedUser> {
+    return this.req<ResolvedUser>(`/api/v1/users/resolve?username=${encodeURIComponent(username)}`)
+  }
+
+  /** 修改资料 */
+  updateProfile(patch: { displayName?: string }): Promise<{ displayName: string }> {
+    return this.req('/api/v1/profile', { method: 'PATCH', body: JSON.stringify(patch) })
   }
 
   /* ---------------- 好友 ---------------- */

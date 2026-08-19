@@ -2,7 +2,7 @@
  * REST API 路由：认证 / 好友 / 消息 / 增量同步 / 文件与头像。
  */
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { rename } from 'node:fs/promises'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import {
@@ -12,6 +12,7 @@ import {
   type AuthResponse,
   type FriendStatus,
   type Message,
+  type ResolvedUser,
   type ServerFriend,
   type ServerMessage,
   type ServerProfile,
@@ -29,15 +30,34 @@ export interface RouteOptions {
   dataDir: string
 }
 
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/
+
 function toServerUser(u: UserRow): ServerUser {
   return {
     userId: u.userId,
+    username: u.username ?? undefined,
     displayName: u.displayName,
     avatarUrl: u.avatarUrl ?? undefined,
     avatarHash: u.avatarHash ?? undefined,
     serverSeq: u.serverSeq,
     createdAt: u.createdAt,
   }
+}
+
+/* ---------------- 密码哈希（scrypt） ---------------- */
+
+function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(password, salt, 64).toString('hex')
+  return `${salt}:${hash}`
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [salt, hash] = stored.split(':')
+  if (!salt || !hash) return false
+  const calc = scryptSync(password, salt, 64)
+  const expected = Buffer.from(hash, 'hex')
+  return calc.length === expected.length && timingSafeEqual(calc, expected)
 }
 
 function toServerMessage(m: Message): ServerMessage {
@@ -60,17 +80,27 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
 
   /* ---------------- 认证 ---------------- */
 
+  /** 注册：创建账号并绑定本设备身份 */
   app.post('/api/v1/auth/register', async (req, reply) => {
-    const body = req.body as { userId?: string; publicKey?: string; displayName?: string }
-    if (!body.userId || !body.publicKey || !body.displayName) {
-      return reply.code(400).send({ error: 'userId/publicKey/displayName required' })
+    const body = req.body as { userId?: string; publicKey?: string; displayName?: string; username?: string; password?: string }
+    if (!body.userId || !body.publicKey || !body.displayName || !body.username || !body.password) {
+      return reply.code(400).send({ error: 'userId/publicKey/displayName/username/password required' })
+    }
+    if (!USERNAME_RE.test(body.username)) {
+      return reply.code(400).send({ error: '用户名需为 3-20 位字母/数字/下划线' })
+    }
+    if (body.password.length < 6) {
+      return reply.code(400).send({ error: '密码至少 6 位' })
     }
     if (!verifyUserId(body.userId, body.publicKey)) {
       return reply.code(400).send({ error: 'userId does not match publicKey' })
     }
-    if (db.getUser(body.userId)) return reply.code(409).send({ error: 'user exists' })
-    db.upsertUser({
+    if (db.userByUsername(body.username)) return reply.code(409).send({ error: '用户名已被占用' })
+    if (db.getUser(body.userId)) return reply.code(409).send({ error: '该设备已注册过账号' })
+    db.createUser({
       userId: body.userId,
+      username: body.username,
+      passwordHash: hashPassword(body.password),
       displayName: body.displayName,
       createdAt: Date.now(),
     })
@@ -81,11 +111,72 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     return res
   })
 
+  /** 登录：用户名 + 密码（在线）；离线时无法登录，但已保存的登录状态可直接离线使用 */
   app.post('/api/v1/auth/login', async (req, reply) => {
-    const body = req.body as { token?: string }
-    const userId = body.token ? db.userForToken(body.token) : undefined
-    if (!userId) return reply.code(401).send({ error: 'invalid token' })
-    return { user: toServerUser(db.getUser(userId)!) }
+    const body = req.body as { username?: string; password?: string }
+    if (!body.username || !body.password) {
+      return reply.code(400).send({ error: 'username/password required' })
+    }
+    const account = db.userByUsername(body.username)
+    if (!account || !account.passwordHash || !verifyPassword(body.password, account.passwordHash)) {
+      return reply.code(401).send({ error: '用户名或密码错误' })
+    }
+    const token = newToken()
+    db.createToken(token, account.userId)
+    return { token, user: toServerUser(account) }
+  })
+
+  /** 重绑定：新设备用同一账号登录时，把账号绑定到当前设备身份（旧设备数据保留但不再关联） */
+  app.post('/api/v1/auth/rebind', async (req, reply) => {
+    const body = req.body as { username?: string; password?: string; userId?: string; publicKey?: string }
+    if (!body.username || !body.password || !body.userId || !body.publicKey) {
+      return reply.code(400).send({ error: 'username/password/userId/publicKey required' })
+    }
+    if (!verifyUserId(body.userId, body.publicKey)) {
+      return reply.code(400).send({ error: 'userId does not match publicKey' })
+    }
+    const account = db.userByUsername(body.username)
+    if (!account || !account.passwordHash || !verifyPassword(body.password, account.passwordHash)) {
+      return reply.code(401).send({ error: '用户名或密码错误' })
+    }
+    if (account.userId === body.userId) {
+      return reply.code(400).send({ error: '该设备已是账号绑定设备' })
+    }
+    // 重绑定：账号 userId 切换到新设备身份，旧设备全部 token 失效（旧数据保留但不再关联）
+    db.rebindUser(body.username, account.userId, body.userId, account.displayName)
+    const token = newToken()
+    db.createToken(token, body.userId)
+    const user = db.getUser(body.userId)!
+    return { token, user: toServerUser(user) }
+  })
+
+  /** 用户名解析（加好友前查询） */
+  app.get<{ Querystring: { username?: string } }>('/api/v1/users/resolve', async (req, reply) => {
+    const username = req.query.username
+    if (!username) return reply.code(400).send({ error: 'username required' })
+    const u = db.userByUsername(username)
+    if (!u || !u.userId) return reply.code(404).send({ error: '用户不存在' })
+    const res: ResolvedUser = {
+      userId: u.userId,
+      username,
+      displayName: u.displayName,
+      avatarUrl: u.avatarUrl ?? undefined,
+      avatarHash: u.avatarHash ?? undefined,
+      statusText: u.statusText ?? undefined,
+    }
+    return res
+  })
+
+  /** 修改资料（昵称等），同步通知好友 */
+  app.patch('/api/v1/profile', async (req, reply) => {
+    const me = (req as AuthedReq).userId!
+    const body = req.body as { displayName?: string }
+    if (body.displayName === undefined) return reply.code(400).send({ error: 'nothing to update' })
+    const name = String(body.displayName).trim()
+    if (!name || name.length > 30) return reply.code(400).send({ error: '昵称需为 1-30 个字符' })
+    db.setDisplayName(me, name)
+    broadcastProfile(db, hub, me)
+    return { displayName: name }
   })
 
   app.get('/api/v1/me', async (req) => {
@@ -240,9 +331,7 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     })
     const meRow = db.getUser(me)!
     const profile = toProfile(meRow)
-    for (const f of listFriendEntries(db, me)) {
-      if (f.confirmed) hub.sendTo(f.userId, { type: 'profile', profile })
-    }
+    broadcastProfile(db, hub, me)
     return { url: profile.avatarUrl, sha256: saved.sha256, size: saved.size }
   })
 
@@ -279,7 +368,7 @@ interface AuthedReq {
   userId?: string
 }
 
-/** preHandler 认证钩子（注册与静态文件除外） */
+/** preHandler 认证钩子（注册/登录/静态文件除外） */
 export function authHook(app: FastifyInstance, db: Db): void {
   app.addHook('preHandler', async (req, reply) => {
     const url = req.url.split('?')[0]!
@@ -287,6 +376,7 @@ export function authHook(app: FastifyInstance, db: Db): void {
       url.startsWith('/files/') ||
       url === '/api/v1/auth/register' ||
       url === '/api/v1/auth/login' ||
+      url === '/api/v1/auth/rebind' ||
       url === '/api/v1/ws' ||
       url === '/health'
     )
@@ -312,6 +402,7 @@ function peerOfConversation(conversationId: string, me: string): string | undefi
 function friendEntry(u: UserRow, confirmed = true): ServerFriend {
   return {
     userId: u.userId,
+    username: u.username ?? undefined,
     displayName: u.displayName,
     avatarUrl: u.avatarUrl ?? undefined,
     avatarHash: u.avatarHash ?? undefined,
@@ -331,6 +422,16 @@ function listFriendEntries(db: Db, me: string): ServerFriend[] {
     out.push(friendEntry(other, r.status === 'confirmed'))
   }
   return out
+}
+
+/** 通知所有好友：我的资料已更新 */
+function broadcastProfile(db: Db, hub: Hub, userId: string): void {
+  const row = db.getUser(userId)
+  if (!row) return
+  const profile = toProfile(row)
+  for (const f of listFriendEntries(db, userId)) {
+    if (f.confirmed) hub.sendTo(f.userId, { type: 'profile', profile })
+  }
 }
 
 function extFromMime(mime: string): string {

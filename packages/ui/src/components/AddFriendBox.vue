@@ -28,7 +28,7 @@ async function submit(): Promise<void> {
     <input
       v-model="userId"
       class="input"
-      placeholder="输入对方的用户 ID（u_ 开头）"
+      placeholder="输入对方的用户名（如 alice）"
       @keydown.enter="submit"
     />
     <button class="btn btn-primary" :disabled="status === 'sending'" @click="submit">

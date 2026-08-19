@@ -11,6 +11,7 @@ import type { LanPeerInfo } from '@chataoo/app-core'
 export const useChatStore = defineStore('chat', () => {
   const session = ref<ChatSession | null>(null)
   const ready = ref(false)
+  const authed = ref(false)
   const online = ref(false)
   const conversations = ref<Conversation[]>([])
   const messages = ref<Record<string, Message[]>>({})
@@ -25,10 +26,14 @@ export const useChatStore = defineStore('chat', () => {
   async function init(s: ChatSession): Promise<void> {
     session.value = s
     ready.value = false
+    authed.value = s.authed
     for (const u of unsubs) u()
     unsubs = []
 
     unsubs.push(
+      s.bus.on('auth', ({ authed: a }) => {
+        authed.value = a
+      }),
       s.bus.on('message', (m) => {
         const list = messages.value[m.conversationId] ?? []
         if (!list.some((x) => x.id === m.id)) {
@@ -160,6 +165,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     session,
     ready,
+    authed,
     online,
     conversations,
     messages,

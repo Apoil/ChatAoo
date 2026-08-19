@@ -81,7 +81,7 @@ function timeLabel(ts: number): string {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 .bubble.mine {
-  background: linear-gradient(135deg, var(--msg-out), var(--msg-out-2));
+  background: var(--msg-out);
   border-radius: var(--radius-lg);
   border-top-right-radius: 4px;
 }

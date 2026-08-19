@@ -45,7 +45,7 @@ watch(() => [props.profile?.avatarHash, props.profile?.updatedAt], resolve)
   position: relative;
   flex: none;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b4fe0, #9d5bff);
+  background: linear-gradient(160deg, #4b5a74, #3a465c);
   display: flex;
   align-items: center;
   justify-content: center;

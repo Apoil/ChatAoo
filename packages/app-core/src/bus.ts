@@ -35,6 +35,8 @@ export interface BusEvents {
   'lan-file': LanFileEvent
   /** 服务器连接状态 */
   online: boolean
+  /** 登录状态变化 */
+  auth: { authed: boolean }
   /** 头像等本地媒体缓存完成 */
   'media-cached': { sha256: string }
   /** 头像已更新 */

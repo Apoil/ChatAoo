@@ -7,18 +7,20 @@ import {
   ChatInput,
   ConversationItem,
   FriendItem,
+  LoginView,
   logoUrl,
   MediaViewer,
   MessageList,
-  SettingsPanel,
+  ProfilePage,
   useChatStore,
 } from '@chataoo/ui'
 import type { Attachment } from '@chataoo/shared'
 
 const session = inject<ChatSession>('session')!
 const store = useChatStore()
-const tab = ref<'chats' | 'friends' | 'settings'>('chats')
+const tab = ref<'chats' | 'friends' | 'profile'>('chats')
 const viewing = ref<{ attachment: Attachment; url: string | null } | null>(null)
+const peerProfileId = ref<string | null>(null)
 
 // 自适应：≥720px 视为平板（双栏），否则手机（单栏）
 const wide = ref(window.innerWidth >= 720)
@@ -40,6 +42,10 @@ function back(): void {
 
 onMounted(async () => {
   await store.init(session)
+  if (store.authed) {
+    const last = store.conversations[0]
+    if (last) void store.openConversation(last.id)
+  }
 })
 
 async function openAttachment(a: Attachment): Promise<void> {
@@ -50,73 +56,91 @@ async function openAttachment(a: Attachment): Promise<void> {
 
 <template>
   <div class="shell" :class="{ wide }">
-    <!-- 侧栏（手机：独立页；平板：常驻） -->
-    <aside v-if="wide || !activeConv" class="sidebar" :class="{ phone: !wide }">
-      <div class="brand">
-        <img :src="logoUrl" class="logo" alt="ChatAoo" />
-        <span class="brand-name">ChatAoo</span>
-        <span class="dot-ind" :class="{ on: store.online }" />
-      </div>
-      <div class="tabs">
-        <button :class="{ active: tab === 'chats' }" @click="tab = 'chats'">会话</button>
-        <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">好友</button>
-        <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">设置</button>
-      </div>
+    <!-- 登录门控 -->
+    <LoginView v-if="!store.authed" :allow-server-edit="true" @done="store.refreshConversations()" />
 
-      <template v-if="tab === 'chats'">
-        <div class="list">
-          <ConversationItem
-            v-for="c in store.conversations"
-            :key="c.id"
-            :conversation="c"
-            @click="store.openConversation(c.id)"
-          />
-          <div v-if="!store.conversations.length" class="empty">从「好友」页选择好友开始聊天</div>
+    <template v-else>
+      <!-- 侧栏（手机：独立页；平板：常驻） -->
+      <aside v-if="wide || !activeConv" class="sidebar" :class="{ phone: !wide }">
+        <div class="brand">
+          <img :src="logoUrl" class="logo" alt="ChatAoo" />
+          <span class="brand-name">ChatAoo</span>
+          <span class="dot-ind" :class="{ on: store.online }" />
         </div>
-      </template>
+        <div class="tabs">
+          <button :class="{ active: tab === 'chats' }" @click="tab = 'chats'">会话</button>
+          <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">好友</button>
+          <button :class="{ active: tab === 'profile' }" @click="tab = 'profile'">我的</button>
+        </div>
 
-      <template v-else-if="tab === 'friends'">
-        <AddFriendBox />
-        <div class="list">
-          <FriendItem
-            v-for="f in store.friends"
-            :key="f.userId"
-            :profile="store.profileOf(f.userId)"
-            :friend-status="friendStatusOf(f.userId)"
-          />
-          <div v-if="!store.friends.length" class="empty">
-            在「设置」里复制你的用户 ID 发给朋友，或在上方输入对方 ID 添加
+        <template v-if="tab === 'chats'">
+          <div class="list">
+            <ConversationItem
+              v-for="c in store.conversations"
+              :key="c.id"
+              :conversation="c"
+              @click="store.openConversation(c.id)"
+            />
+            <div v-if="!store.conversations.length" class="empty">从「好友」页选择好友开始聊天</div>
           </div>
-        </div>
-      </template>
+        </template>
 
-      <SettingsPanel v-else @close="tab = 'chats'" />
-    </aside>
-
-    <!-- 聊天区 -->
-    <main v-if="wide || activeConv" class="chat" :class="{ phone: !wide }">
-      <template v-if="activeConv && peerId">
-        <header class="chat-head">
-          <button v-if="!wide" class="icon-btn back" @click="back">←</button>
-          <Avatar :profile="peerProfile" :online="peerOnline" :size="34" />
-          <div class="peer-meta">
-            <div class="peer-name">{{ peerProfile?.displayName ?? peerId.slice(0, 10) }}</div>
-            <div class="peer-sub">
-              <span v-if="peerOnline" class="online-txt">在线</span>
-              <span v-else class="offline-txt">离线</span>
+        <template v-else-if="tab === 'friends'">
+          <AddFriendBox />
+          <div class="list">
+            <FriendItem
+              v-for="f in store.friends"
+              :key="f.userId"
+              :profile="store.profileOf(f.userId)"
+              :friend-status="friendStatusOf(f.userId)"
+            />
+            <div v-if="!store.friends.length" class="empty">
+              在「我的」页查看你的用户名发给朋友，或在上方输入对方的用户名添加
             </div>
           </div>
-        </header>
-        <MessageList :conversation-id="activeConv.id" @open="openAttachment" />
-        <ChatInput @send-text="(t) => store.sendText(t)" @send-files="(f) => store.sendFiles(f)" />
-      </template>
-      <div v-else class="placeholder">
-        <img :src="logoUrl" class="ph-logo" alt="" />
-        <p>选择会话开始聊天</p>
-      </div>
-    </main>
+        </template>
 
-    <MediaViewer v-if="viewing" :attachment="viewing.attachment" :url="viewing.url" @close="viewing = null" />
+        <div v-else class="profile-wrap">
+          <ProfilePage @close="tab = 'chats'" />
+        </div>
+      </aside>
+
+      <!-- 聊天区 -->
+      <main v-if="wide || activeConv" class="chat" :class="{ phone: !wide }">
+        <template v-if="activeConv && peerId">
+          <header class="chat-head">
+            <button v-if="!wide" class="icon-btn back" @click="back">←</button>
+            <button class="peer" @click="peerProfileId = peerId">
+              <Avatar :profile="peerProfile" :online="peerOnline" :size="34" />
+              <div class="peer-meta">
+                <div class="peer-name">{{ peerProfile?.displayName ?? peerId.slice(0, 10) }}</div>
+                <div class="peer-sub">
+                  <span v-if="peerOnline" class="online-txt">在线</span>
+                  <span v-else class="offline-txt">离线</span>
+                </div>
+              </div>
+            </button>
+          </header>
+          <MessageList :conversation-id="activeConv.id" @open="openAttachment" />
+          <ChatInput @send-text="(t) => store.sendText(t)" @send-files="(f) => store.sendFiles(f)" />
+        </template>
+        <div v-else class="placeholder">
+          <img :src="logoUrl" class="ph-logo" alt="" />
+          <p>选择会话开始聊天</p>
+        </div>
+      </main>
+
+      <!-- 对方主页（手机全屏 / 平板侧栏） -->
+      <div v-if="peerProfileId" class="peer-overlay" :class="{ phone: !wide }">
+        <ProfilePage
+          :peer-id="peerProfileId"
+          @close="peerProfileId = null"
+          @open-chat="(id) => store.openConversation(id)"
+        />
+      </div>
+
+      <MediaViewer v-if="viewing" :attachment="viewing.attachment" :url="viewing.url" @close="viewing = null" />
+    </template>
   </div>
 </template>
 
@@ -192,6 +216,11 @@ async function openAttachment(a: Attachment): Promise<void> {
   padding: 30px 16px;
   line-height: 1.6;
 }
+.profile-wrap {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
 .chat {
   flex: 1;
   display: flex;
@@ -201,15 +230,26 @@ async function openAttachment(a: Attachment): Promise<void> {
 .chat-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 6px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border-soft);
 }
 .back {
-  margin-right: 2px;
+  flex: none;
+}
+.peer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+}
+.peer:active {
+  background: var(--bg-hover);
 }
 .peer-meta {
   min-width: 0;
+  text-align: left;
 }
 .peer-name {
   font-weight: 700;
@@ -242,5 +282,18 @@ async function openAttachment(a: Attachment): Promise<void> {
   border-radius: 24px;
   opacity: 0.9;
   margin-bottom: 10px;
+}
+.peer-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-sidebar);
+  z-index: 300;
+}
+.peer-overlay:not(.phone) {
+  right: 0;
+  left: auto;
+  width: min(380px, 45vw);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-float);
 }
 </style>

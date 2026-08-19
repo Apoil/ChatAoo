@@ -1,47 +1,45 @@
-/* ChatAoo 主题 —— Telegram 风格暗色 + 品牌紫蓝渐变 */
+/* ChatAoo 主题 —— 中性深灰 + 单一 Telegram 蓝，克制、干净 */
 :root {
-  /* 背景层级 */
-  --bg: #0f1220;
-  --bg-sidebar: #141a2e;
-  --bg-raised: #1b2340;
-  --bg-hover: #232d52;
-  --bg-active: #2a3560;
-  --bg-input: #10152a;
-  --bg-float: rgba(16, 20, 40, 0.92);
+  /* 背景层级（暖中性灰，非偏紫蓝） */
+  --bg: #111417;
+  --bg-sidebar: #171b20;
+  --bg-raised: #1e232a;
+  --bg-hover: #252b34;
+  --bg-active: #2b323d;
+  --bg-input: #0c0f12;
+  --bg-float: rgba(17, 20, 23, 0.94);
 
   /* 边框 */
-  --border: #262f55;
-  --border-soft: #1e2747;
+  --border: #2a313b;
+  --border-soft: #20262e;
 
   /* 文本 */
-  --text: #e9edf8;
-  --text-dim: #93a0c4;
-  --text-faint: #5d6b92;
+  --text: #e6e9ee;
+  --text-dim: #9aa4b1;
+  --text-faint: #5f6a78;
 
-  /* 品牌 */
-  --accent: #5b6cff;
-  --accent-2: #9d5bff;
-  --accent-3: #22d3ee;
+  /* 品牌（单一蓝色） */
+  --accent: #3390ec;
   --accent-text: #ffffff;
-  --accent-soft: rgba(91, 108, 255, 0.16);
+  --accent-soft: rgba(51, 144, 236, 0.14);
+  --accent-border: rgba(51, 144, 236, 0.4);
 
   /* 消息气泡 */
-  --msg-in: #1e2747;
-  --msg-out: #3b4fe0;
-  --msg-out-2: #4a5ff2;
+  --msg-in: #1e232a;
+  --msg-out: #2b5278;
 
   /* 状态色 */
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --danger: #f87171;
+  --ok: #35c18e;
+  --warn: #e8b23a;
+  --danger: #e5655f;
 
   /* 圆角与阴影 */
   --radius-sm: 8px;
   --radius: 12px;
-  --radius-lg: 18px;
+  --radius-lg: 16px;
   --radius-full: 999px;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-  --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.5);
 
   --font: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
 }
@@ -73,11 +71,11 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2c3766;
+  background: #2c333d;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #39477f;
+  background: #3a424e;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -108,35 +106,36 @@ textarea {
   border-radius: var(--radius-full);
   font-size: 13px;
   font-weight: 600;
-  transition: background 0.15s, transform 0.05s;
+  transition: background 0.15s, opacity 0.15s, transform 0.05s;
   border: 1px solid transparent;
 }
 .btn:active {
   transform: scale(0.97);
 }
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   color: var(--accent-text);
 }
 .btn-primary:hover {
-  filter: brightness(1.1);
+  background: #2f82d8;
 }
 .btn-ghost {
   background: var(--bg-raised);
   color: var(--text);
+  border-color: var(--border);
 }
 .btn-ghost:hover {
   background: var(--bg-hover);
 }
 .btn-danger {
-  background: rgba(248, 113, 113, 0.15);
+  background: rgba(229, 101, 95, 0.14);
   color: var(--danger);
 }
 .btn-danger:hover {
-  background: rgba(248, 113, 113, 0.25);
+  background: rgba(229, 101, 95, 0.24);
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
@@ -191,7 +190,7 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   background: var(--accent-soft);
-  color: var(--accent-3);
+  color: var(--accent);
 }
 
 .divider {
@@ -204,7 +203,7 @@ textarea {
 .cropper-modal {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 14, 0.86);
+  background: rgba(5, 7, 9, 0.88);
   display: flex;
   align-items: center;
   justify-content: center;

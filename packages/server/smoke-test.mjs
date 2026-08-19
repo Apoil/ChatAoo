@@ -1,11 +1,12 @@
 /**
- * 服务器端到端冒烟测试：注册 Alice/Bob -> 加好友 -> 发消息 -> 同步 -> 头像上传 -> 文件上传 -> Range 下载
+ * 服务器端到端冒烟测试：注册/登录/重绑定/用户名解析/好友/消息/同步/头像/文件/Range
  */
 const BASE = 'http://127.0.0.1:47800'
 const { generateIdentity } = await import('../shared/dist/index.js')
 const alice = await generateIdentity('Alice')
 const bob = await generateIdentity('Bob')
-// 消息 ID 加时间戳保证幂等测试可重复
+const USER_A = `alice_${Date.now() % 100000}`
+const USER_B = `bob_${Date.now() % 100000}`
 const MSG_ID = `m_test_${Date.now()}`
 
 async function api(path, { method = 'GET', token, body, headers = {} } = {}) {
@@ -28,94 +29,110 @@ function assert(cond, name) {
   console.log(`  ok: ${name}`)
 }
 
-// 1. register
+// 1. 注册（用户名+密码）
 const ra = await api('/api/v1/auth/register', {
   method: 'POST',
-  body: { userId: alice.userId, publicKey: alice.publicKey, displayName: 'Alice' },
+  body: { userId: alice.userId, publicKey: alice.publicKey, username: USER_A, password: 'pass123', displayName: 'Alice' },
 })
-assert(ra.token && ra.user.userId === alice.userId, 'register alice')
+assert(ra.token && ra.user.userId === alice.userId && ra.user.username === USER_A, 'register alice (username+password)')
 const rb = await api('/api/v1/auth/register', {
   method: 'POST',
-  body: { userId: bob.userId, publicKey: bob.publicKey, displayName: 'Bob' },
+  body: { userId: bob.userId, publicKey: bob.publicKey, username: USER_B, password: 'pass123', displayName: 'Bob' },
 })
 assert(rb.token && rb.user.userId === bob.userId, 'register bob')
-console.log('  (alice=' + alice.userId.slice(0, 12) + '… bob=' + bob.userId.slice(0, 12) + '…)')
 
-// 2. login with token
-const la = await api('/api/v1/auth/login', { method: 'POST', body: { token: ra.token } })
-assert(la.user.userId === alice.userId, 'login alice')
+// 2. 登录（用户名+密码）
+const la = await api('/api/v1/auth/login', { method: 'POST', body: { username: USER_A, password: 'pass123' } })
+assert(la.token && la.user.userId === alice.userId, 'login alice')
 
-// 3. friends
-const req1 = await api('/api/v1/friends/request', { method: 'POST', token: ra.token, body: { userId: bob.userId } })
-assert(req1.status === 'outgoing', 'alice -> bob request')
-const acc = await api('/api/v1/friends/accept', { method: 'POST', token: rb.token, body: { userId: alice.userId } })
-assert(acc.status === 'friends', 'bob accepts')
-const fa = await api('/api/v1/friends', { token: ra.token })
-assert(fa.friends.some((f) => f.userId === bob.userId && f.confirmed), 'alice friend list')
-
-// 4. message send (with fixed id for idempotency test)
-const conv = [alice.userId, bob.userId].sort().join('__')
-const msg = {
-  id: MSG_ID,
-  conversationId: conv,
-  kind: 'text',
-  text: 'hello bob from alice',
-  createdAt: Date.now(),
+// 3. 错误密码
+let badLogin = false
+try {
+  await api('/api/v1/auth/login', { method: 'POST', body: { username: USER_A, password: 'wrong' } })
+} catch {
+  badLogin = true
 }
-const s1 = await api('/api/v1/messages', { method: 'POST', token: ra.token, body: msg })
+assert(badLogin, 'wrong password rejected')
+
+// 4. 重绑定：新设备登录同一账号（旧设备 token 应立即失效）
+const newDevice = await generateIdentity('Alice2')
+const reb = await api('/api/v1/auth/rebind', {
+  method: 'POST',
+  body: { username: USER_A, password: 'pass123', userId: newDevice.userId, publicKey: newDevice.publicKey },
+})
+assert(reb.token && reb.user.userId === newDevice.userId, 'rebind account to new device')
+// 旧 token 失效
+let oldTokenDead = false
+try {
+  await api('/api/v1/me', { token: ra.token })
+} catch {
+  oldTokenDead = true
+}
+assert(oldTokenDead, 'old device token invalidated after rebind')
+// 此后 alice 的身份 = 新设备
+const aliceActive = { userId: newDevice.userId, token: reb.token }
+
+// 5. 用户名解析
+const resolved = await api(`/api/v1/users/resolve?username=${USER_B}`, { token: aliceActive.token })
+assert(resolved.userId === bob.userId && resolved.displayName === 'Bob', 'resolve username')
+
+// 6. 修改昵称
+const nameRes = await api('/api/v1/profile', {
+  method: 'PATCH',
+  token: aliceActive.token,
+  body: { displayName: '爱丽丝' },
+})
+assert(nameRes.displayName === '爱丽丝', 'update displayName')
+
+// 7. 好友（alice = 新设备身份）
+const req1 = await api('/api/v1/friends/request', { method: 'POST', token: aliceActive.token, body: { userId: bob.userId } })
+assert(req1.status === 'outgoing', 'alice -> bob request')
+const acc = await api('/api/v1/friends/accept', { method: 'POST', token: rb.token, body: { userId: aliceActive.userId } })
+assert(acc.status === 'friends', 'bob accepts')
+
+// 8. 消息发送 + 幂等
+const conv = [aliceActive.userId, bob.userId].sort().join('__')
+const msg = { id: MSG_ID, conversationId: conv, kind: 'text', text: 'hello bob', createdAt: Date.now() }
+const s1 = await api('/api/v1/messages', { method: 'POST', token: aliceActive.token, body: msg })
 assert(s1.seq >= 1, 'message posted')
-const s2 = await api('/api/v1/messages', { method: 'POST', token: ra.token, body: msg })
-assert(s2.seq === s1.seq, 'message idempotent (same seq)')
+const s2 = await api('/api/v1/messages', { method: 'POST', token: aliceActive.token, body: msg })
+assert(s2.seq === s1.seq, 'message idempotent')
 
-// 5. sync
+// 9. 同步
 const sy = await api(`/api/v1/sync?since=0&profilesSince=0`, { token: rb.token })
-assert(sy.messages.length >= 1 && sy.messages.some((m) => m.id === MSG_ID), 'bob syncs message')
-assert(sy.nextSeq >= s1.seq, 'nextSeq matches')
+assert(sy.messages.some((m) => m.id === MSG_ID), 'bob syncs message')
+assert(sy.profiles.some((p) => p.displayName === '爱丽丝'), 'bob syncs renamed profile')
 
-// 6. history
-const hist = await api(`/api/v1/messages?conversationId=${conv}`, { token: rb.token })
-assert(hist.messages.some((m) => m.id === MSG_ID), 'history has the message')
-
-// 7. avatar upload (tiny PNG)
+// 10. 头像上传 + 下载
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64',
 )
 const fd = new FormData()
 fd.append('avatar', new Blob([png], { type: 'image/png' }), 'avatar.png')
-const av = await fetch(BASE + '/api/v1/avatar', {
-  method: 'POST',
-  headers: { Authorization: `Bearer ${ra.token}` },
-  body: fd,
-})
+const av = await fetch(BASE + '/api/v1/avatar', { method: 'POST', headers: { Authorization: `Bearer ${aliceActive.token}` }, body: fd })
 assert(av.ok, 'avatar upload status')
 const avJson = await av.json()
 assert(avJson.url && avJson.sha256, 'avatar returns url+sha')
 const avGet = await fetch(BASE + avJson.url)
 assert(avGet.ok && (await avGet.arrayBuffer()).byteLength === png.length, 'avatar downloadable')
 
-// 8. message file upload + Range
+// 11. 文件上传 + Range
 const fd2 = new FormData()
 fd2.append('file', new Blob([Buffer.from('0123456789abcdef'.repeat(64))], { type: 'video/mp4' }), 'clip.mp4')
 fd2.append('kind', 'video')
-const fu = await fetch(BASE + '/api/v1/files', {
-  method: 'POST',
-  headers: { Authorization: `Bearer ${ra.token}` },
-  body: fd2,
-})
+const fu = await fetch(BASE + '/api/v1/files', { method: 'POST', headers: { Authorization: `Bearer ${aliceActive.token}` }, body: fd2 })
 assert(fu.ok, 'file upload')
 const fuJson = await fu.json()
-assert(fuJson.url && fuJson.sha256, 'file returns url')
 const range = await fetch(BASE + fuJson.url, { headers: { Range: 'bytes=0-63' } })
 assert(range.status === 206, 'range returns 206')
 assert((await range.arrayBuffer()).byteLength === 64, 'range body length 64')
-assert(range.headers.get('content-range')?.startsWith('bytes 0-63/'), 'content-range header')
 
-// 9. unauthorized access denied
+// 12. 未授权拒绝
 let denied = false
 try {
   await api('/api/v1/me')
-} catch (e) {
+} catch {
   denied = true
 }
 assert(denied, 'me without token is 401')

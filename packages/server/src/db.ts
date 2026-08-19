@@ -18,14 +18,17 @@ export interface Db {
   db: DatabaseSync
   close(): void
   /* 用户 */
-  upsertUser(u: {
+  createUser(u: {
     userId: string
+    username: string
+    passwordHash: string
     displayName: string
-    avatarUrl?: string
-    avatarHash?: string
-    statusText?: string
     createdAt: number
   }): void
+  userByUsername(username: string): UserRow | undefined
+  /** 重绑定账号到新设备（同时使旧设备全部 token 失效） */
+  rebindUser(username: string, oldUserId: string, newUserId: string, displayName: string): void
+  setDisplayName(userId: string, displayName: string): void
   getUser(userId: string): UserRow | undefined
   updateUserProfile(userId: string, patch: { avatarUrl?: string; avatarHash?: string; statusText?: string }): void
   touchUser(userId: string): void
@@ -53,6 +56,8 @@ export interface Db {
 
 export interface UserRow {
   userId: string
+  username: string | null
+  passwordHash: string | null
   displayName: string
   avatarUrl: string | null
   avatarHash: string | null
@@ -95,6 +100,8 @@ export interface FileRow {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   userId TEXT PRIMARY KEY,
+  username TEXT UNIQUE,
+  passwordHash TEXT,
   displayName TEXT NOT NULL,
   avatarUrl TEXT,
   avatarHash TEXT,
@@ -156,6 +163,20 @@ function rowToMessage(r: MessageRow): Message {
   return m
 }
 
+/** 旧库迁移：为 users 表补充账号字段 */
+function migrate(db: DatabaseSync): void {
+  const cols = db.prepare('PRAGMA table_info(users)').all() as { name: string }[]
+  const has = (name: string) => cols.some((c) => c.name === name)
+  if (!has('username')) db.exec('ALTER TABLE users ADD COLUMN username TEXT')
+  if (!has('passwordHash')) db.exec('ALTER TABLE users ADD COLUMN passwordHash TEXT')
+  if (!has('username')) return
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)')
+  } catch {
+    /* 已存在 */
+  }
+}
+
 export function openDb(dataDir: string): Db {
   mkdirSync(dataDir, { recursive: true })
   const db = new DatabaseSync(join(dataDir, 'chataoo.db'))
@@ -164,18 +185,17 @@ export function openDb(dataDir: string): Db {
   // DELETE 模式即时可见、行为可预期。
   db.exec('PRAGMA journal_mode = DELETE;')
   db.exec(SCHEMA)
+  migrate(db)
 
   const stmt = {
-    upsertUser: db.prepare(
-      `INSERT INTO users (userId, displayName, avatarUrl, avatarHash, statusText, serverSeq, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(userId) DO UPDATE SET
-         displayName = excluded.displayName,
-         avatarUrl = COALESCE(excluded.avatarUrl, users.avatarUrl),
-         avatarHash = COALESCE(excluded.avatarHash, users.avatarHash),
-         statusText = COALESCE(excluded.statusText, users.statusText),
-         updatedAt = excluded.updatedAt`,
+    createUser: db.prepare(
+      `INSERT INTO users (userId, username, passwordHash, displayName, serverSeq, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, 0, ?, ?)`,
     ),
+    userByUsername: db.prepare('SELECT * FROM users WHERE username = ?'),
+    rebindUser: db.prepare('UPDATE users SET userId = ?, displayName = ?, updatedAt = ? WHERE username = ?'),
+    deleteUserTokens: db.prepare('DELETE FROM tokens WHERE userId = ?'),
+    setDisplayName: db.prepare('UPDATE users SET displayName = ?, updatedAt = ? WHERE userId = ?'),
     getUser: db.prepare('SELECT * FROM users WHERE userId = ?'),
     updateProfile: db.prepare(
       `UPDATE users SET avatarUrl = COALESCE(?, avatarUrl), avatarHash = COALESCE(?, avatarHash),
@@ -207,17 +227,21 @@ export function openDb(dataDir: string): Db {
   return {
     db,
     close: () => db.close(),
-    upsertUser: (u) =>
-      stmt.upsertUser.run(
-        u.userId,
-        u.displayName,
-        u.avatarUrl ?? null,
-        u.avatarHash ?? null,
-        u.statusText ?? null,
-        0,
-        u.createdAt,
-        u.createdAt,
-      ),
+    createUser: (u) =>
+      stmt.createUser.run(u.userId, u.username, u.passwordHash, u.displayName, u.createdAt, u.createdAt),
+    userByUsername: (username) => stmt.userByUsername.get(username) as UserRow | undefined,
+    rebindUser: (username, oldUserId, newUserId, displayName) => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        stmt.rebindUser.run(newUserId, displayName, Date.now(), username)
+        stmt.deleteUserTokens.run(oldUserId)
+        db.exec('COMMIT')
+      } catch (e) {
+        db.exec('ROLLBACK')
+        throw e
+      }
+    },
+    setDisplayName: (userId, displayName) => stmt.setDisplayName.run(displayName, Date.now(), userId),
     getUser: (userId) => stmt.getUser.get(userId) as UserRow | undefined,
     updateUserProfile: (userId, patch) =>
       stmt.updateProfile.run(
