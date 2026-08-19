@@ -1,0 +1,15 @@
+// ChatAoo Gradle 全局初始化脚本：
+// 大陆网络环境下 dl.google.com / repo.maven.apache.org 的 Java TLS 握手会被中断，
+// 因此向所有项目（含各插件子项目的 buildscript）优先注入阿里云镜像。
+allprojects {
+  buildscript {
+    repositories {
+      maven { url 'https://maven.aliyun.com/repository/google' }
+      maven { url 'https://maven.aliyun.com/repository/public' }
+    }
+  }
+  repositories {
+    maven { url 'https://maven.aliyun.com/repository/google' }
+    maven { url 'https://maven.aliyun.com/repository/public' }
+  }
+}

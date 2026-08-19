@@ -36,7 +36,11 @@ assets/icons/   # 生成的应用图标（PNG/ICO/Android 自适应）
 
 - Node.js ≥ 20.19（推荐 22+）
 - pnpm ≥ 10
-- 构建 Android APK 需要：JDK 17 + Android SDK（或 Android Studio）
+- 构建 Android APK 需要：JDK 21 + Android SDK（或 Android Studio）；
+  已内置 `android/gradle-init.gradle`（阿里云 Maven 镜像，大陆网络直连
+  Maven Central / dl.google.com 的 Java TLS 常被中断时自动生效），
+  无需手动配置镜像。`android/gradle.properties` 中的
+  `org.gradle.java.installations.paths` 为本机路径，其他机器按需修改或删除。
 
 ### 1. 安装依赖并构建
 

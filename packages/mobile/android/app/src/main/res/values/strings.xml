@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ChatAoo</string>
+    <string name="title_activity_main">ChatAoo</string>
+    <string name="package_name">com.chataoo.mobile</string>
+    <string name="custom_url_scheme">com.chataoo.mobile</string>
+</resources>

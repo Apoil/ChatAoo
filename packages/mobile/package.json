@@ -8,7 +8,7 @@
     "build": "vite build",
     "cap:add": "cap add android",
     "cap:sync": "pnpm build && cap sync android",
-    "cap:build:apk": "pnpm cap:sync && cd android && gradlew.bat assembleDebug",
+    "cap:build:apk": "pnpm cap:sync && cd android && gradlew.bat -I ..\\gradle-init.gradle assembleDebug",
     "cap:open": "cap open android",
     "typecheck": "vue-tsc -p tsconfig.json --noEmit"
   },
