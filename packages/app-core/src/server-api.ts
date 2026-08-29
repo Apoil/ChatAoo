@@ -156,11 +156,64 @@ export class ServerApi {
 
   /* ---------------- 文件 ---------------- */
 
-  uploadFile(file: Blob, name: string, kind: string): Promise<UploadResult> {
+  uploadFile(
+    file: Blob,
+    name: string,
+    kind: string,
+    onProgress?: (pct: number) => void,
+  ): Promise<UploadResult> {
     const fd = new FormData()
     fd.append('file', file, name)
     fd.append('kind', kind)
-    return this.req<UploadResult>('/api/v1/files', { method: 'POST', body: fd })
+    if (!onProgress) return this.req<UploadResult>('/api/v1/files', { method: 'POST', body: fd })
+    return this.reqUpload<UploadResult>('/api/v1/files', fd, onProgress)
+  }
+
+  lookupFile(sha256: string): Promise<{
+    id: string
+    url: string
+    sha256: string
+    name: string
+    mime: string
+    size: number
+    kind: string
+  }> {
+    return this.req(`/api/v1/files/by-sha/${encodeURIComponent(sha256)}`)
+  }
+
+  deleteMessage(id: string): Promise<{ ok: boolean; seq: number }> {
+    return this.req(`/api/v1/messages/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  }
+
+  private reqUpload<T>(path: string, body: FormData, onProgress: (pct: number) => void): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', this.base + path)
+      const token = this.getToken()
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable && ev.total > 0) onProgress(Math.min(99, Math.round((ev.loaded / ev.total) * 100)))
+      }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve((xhr.responseText ? JSON.parse(xhr.responseText) : undefined) as T)
+          } catch (e) {
+            reject(e)
+          }
+          return
+        }
+        let msg = xhr.responseText
+        try {
+          msg = JSON.parse(xhr.responseText).error ?? msg
+        } catch {
+          /* keep */
+        }
+        reject(new ApiError(xhr.status, msg))
+      }
+      xhr.onerror = () => reject(new ApiError(0, 'upload failed'))
+      xhr.send(body)
+    })
   }
 
   uploadAvatar(file: Blob, name: string): Promise<{ url: string; sha256: string; size: number }> {

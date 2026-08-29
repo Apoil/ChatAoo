@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { ChatSession } from '@chataoo/app-core'
 import {
   AddFriendBox,
@@ -7,6 +7,7 @@ import {
   ChatInput,
   ConversationItem,
   FriendItem,
+  Icon,
   LoginView,
   logoUrl,
   MediaViewer,
@@ -22,14 +23,15 @@ const tab = ref<'chats' | 'friends' | 'profile'>('chats')
 const viewing = ref<{ attachment: Attachment; url: string | null } | null>(null)
 const peerProfileId = ref<string | null>(null)
 
-// 自适应：≥720px 视为平板（双栏），否则手机（单栏）
 const wide = ref(window.innerWidth >= 720)
 window.addEventListener('resize', () => (wide.value = window.innerWidth >= 720))
 
-const activeConv = computed(() => store.conversations.find((c) => c.id === store.activeConversationId))
 const peerId = computed(() => (store.activeConversationId ? store.peerOf(store.activeConversationId) : null))
+const chatting = computed(() => !!store.activeConversationId && !!peerId.value)
 const peerProfile = computed(() => (peerId.value ? store.profileOf(peerId.value) : undefined))
 const peerOnline = computed(() => (peerId.value ? store.isPeerOnline(peerId.value) : false))
+const me = computed(() => (store.session ? store.profileOf(store.session.me.userId) : undefined))
+const sideTitle = computed(() => (tab.value === 'chats' ? '消息' : tab.value === 'friends' ? '好友' : '我'))
 
 function friendStatusOf(userId: string): string {
   return store.friends.find((f) => f.userId === userId)?.status ?? 'none'
@@ -48,6 +50,13 @@ onMounted(async () => {
   }
 })
 
+watch(
+  () => store.activeConversationId,
+  (id) => {
+    if (id) tab.value = 'chats'
+  },
+)
+
 async function openAttachment(a: Attachment): Promise<void> {
   const url = await session.attachmentUrlOf(a)
   viewing.value = { attachment: a, url }
@@ -56,81 +65,83 @@ async function openAttachment(a: Attachment): Promise<void> {
 
 <template>
   <div class="shell" :class="{ wide }">
-    <!-- 登录门控 -->
     <LoginView v-if="!store.authed" :allow-server-edit="true" @done="store.refreshConversations()" />
 
     <template v-else>
-      <!-- 侧栏（手机：独立页；平板：常驻） -->
-      <aside v-if="wide || !activeConv" class="sidebar" :class="{ phone: !wide }">
+      <aside v-if="wide || !chatting" class="sidebar">
         <div class="brand">
           <img :src="logoUrl" class="logo" alt="ChatAoo" />
-          <span class="brand-name">ChatAoo</span>
-          <span class="dot-ind" :class="{ on: store.online }" />
-        </div>
-        <div class="tabs">
-          <button :class="{ active: tab === 'chats' }" @click="tab = 'chats'">会话</button>
-          <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">好友</button>
-          <button :class="{ active: tab === 'profile' }" @click="tab = 'profile'">我的</button>
+          <h1>{{ wide ? sideTitle : 'ChatAoo' }}</h1>
+          <span class="net" :class="{ on: store.online }" />
         </div>
 
-        <template v-if="tab === 'chats'">
-          <div class="list">
-            <ConversationItem
-              v-for="c in store.conversations"
-              :key="c.id"
-              :conversation="c"
-              @click="store.openConversation(c.id)"
-            />
-            <div v-if="!store.conversations.length" class="empty">从「好友」页选择好友开始聊天</div>
-          </div>
-        </template>
+        <div v-if="tab === 'chats'" class="list">
+          <ConversationItem
+            v-for="c in store.conversations"
+            :key="c.id"
+            :conversation="c"
+            @click="store.openConversation(c.id)"
+          />
+          <p v-if="!store.conversations.length" class="empty-hint">还没有会话。去「好友」里挑一个人开始聊。</p>
+        </div>
 
-        <template v-else-if="tab === 'friends'">
+        <div v-else-if="tab === 'friends'" class="list">
           <AddFriendBox />
-          <div class="list">
-            <FriendItem
-              v-for="f in store.friends"
-              :key="f.userId"
-              :profile="store.profileOf(f.userId)"
-              :friend-status="friendStatusOf(f.userId)"
-            />
-            <div v-if="!store.friends.length" class="empty">
-              在「我的」页查看你的用户名发给朋友，或在上方输入对方的用户名添加
-            </div>
-          </div>
-        </template>
+          <FriendItem
+            v-for="f in store.friends"
+            :key="f.userId"
+            :user-id="f.userId"
+            :profile="store.profileOf(f.userId)"
+            :friend-status="friendStatusOf(f.userId)"
+          />
+          <p v-if="!store.friends.length" class="empty-hint">在「我」里复制用户名发给朋友，或在上方输入对方用户名。</p>
+        </div>
 
         <div v-else class="profile-wrap">
-          <ProfilePage @close="tab = 'chats'" />
+          <ProfilePage :show-back="false" />
         </div>
+
+        <nav class="dock">
+          <button :class="{ active: tab === 'chats' }" @click="tab = 'chats'">
+            <Icon name="chat" :size="20" />
+            消息
+          </button>
+          <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">
+            <Icon name="users" :size="20" />
+            好友
+          </button>
+          <button :class="{ active: tab === 'profile' }" @click="tab = 'profile'">
+            <Avatar :profile="me" :size="22" />
+            我
+          </button>
+        </nav>
       </aside>
 
-      <!-- 聊天区 -->
-      <main v-if="wide || activeConv" class="chat" :class="{ phone: !wide }">
-        <template v-if="activeConv && peerId">
+      <main v-if="wide || chatting" class="chat">
+        <template v-if="chatting && store.activeConversationId">
           <header class="chat-head">
-            <button v-if="!wide" class="icon-btn back" @click="back">←</button>
-            <button class="peer" @click="peerProfileId = peerId">
-              <Avatar :profile="peerProfile" :online="peerOnline" :size="34" />
+            <button v-if="!wide" class="icon-btn back" @click="back">
+              <Icon name="back" :size="20" />
+            </button>
+            <button v-if="peerId" class="peer" @click="peerProfileId = peerId">
+              <Avatar :profile="peerProfile" :online="peerOnline" :size="32" />
               <div class="peer-meta">
                 <div class="peer-name">{{ peerProfile?.displayName ?? peerId.slice(0, 10) }}</div>
                 <div class="peer-sub">
                   <span v-if="peerOnline" class="online-txt">在线</span>
-                  <span v-else class="offline-txt">离线</span>
+                  <span v-else>离线</span>
                 </div>
               </div>
             </button>
           </header>
-          <MessageList :conversation-id="activeConv.id" @open="openAttachment" />
+          <MessageList :key="store.activeConversationId" :conversation-id="store.activeConversationId" @open="openAttachment" />
           <ChatInput @send-text="(t) => store.sendText(t)" @send-files="(f) => store.sendFiles(f)" />
         </template>
         <div v-else class="placeholder">
-          <img :src="logoUrl" class="ph-logo" alt="" />
-          <p>选择会话开始聊天</p>
+          <p>从左侧选一个会话</p>
         </div>
       </main>
 
-      <!-- 对方主页（手机全屏 / 平板侧栏） -->
       <div v-if="peerProfileId" class="peer-overlay" :class="{ phone: !wide }">
         <ProfilePage
           :peer-id="peerProfileId"
@@ -148,6 +159,7 @@ async function openAttachment(a: Attachment): Promise<void> {
 .shell {
   display: flex;
   height: 100dvh;
+  background: var(--bg-sidebar);
 }
 .shell.wide .sidebar {
   width: 300px;
@@ -158,80 +170,81 @@ async function openAttachment(a: Attachment): Promise<void> {
 }
 .sidebar {
   flex: none;
-  background: var(--bg-sidebar);
   display: flex;
   flex-direction: column;
+  background: var(--bg-sidebar);
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 12px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
 }
 .logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
 }
-.brand-name {
-  font-size: 17px;
-  font-weight: 800;
+.brand h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  flex: 1;
 }
-.dot-ind {
-  width: 9px;
-  height: 9px;
+.net {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--danger);
-  margin-left: auto;
 }
-.dot-ind.on {
+.net.on {
   background: var(--ok);
-}
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 0 12px 8px;
-}
-.tabs button {
-  flex: 1;
-  padding: 8px 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: 13px;
-  font-weight: 600;
-}
-.tabs button.active {
-  background: var(--bg-active);
-  color: var(--text);
 }
 .list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 12px;
-}
-.empty {
-  color: var(--text-faint);
-  font-size: 13px;
-  text-align: center;
-  padding: 30px 16px;
-  line-height: 1.6;
+  min-height: 0;
 }
 .profile-wrap {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
 }
+.dock {
+  display: flex;
+  border-top: 1px solid var(--border-soft);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--bg-sidebar);
+  flex: none;
+}
+.dock button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 0 6px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.dock button.active {
+  color: var(--accent);
+}
 .chat {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background: var(--bg-chat);
 }
 .chat-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: 2px;
+  padding: 8px 10px;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border-soft);
 }
 .back {
@@ -242,46 +255,41 @@ async function openAttachment(a: Attachment): Promise<void> {
   align-items: center;
   gap: 10px;
   padding: 4px 8px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
+  flex: none;
+  min-width: max-content;
+  line-height: 1.2;
 }
 .peer:active {
   background: var(--bg-hover);
 }
 .peer-meta {
-  min-width: 0;
+  flex: none;
+  min-width: max-content;
   text-align: left;
 }
 .peer-name {
-  font-weight: 700;
+  font-weight: 600;
   font-size: 15px;
+  line-height: 1.25;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .peer-sub {
-  font-size: 11.5px;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 .online-txt {
   color: var(--ok);
 }
-.offline-txt {
-  color: var(--text-faint);
-}
 .placeholder {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: var(--text-dim);
-  gap: 8px;
-}
-.ph-logo {
-  width: 96px;
-  height: 96px;
-  border-radius: 24px;
-  opacity: 0.9;
-  margin-bottom: 10px;
+  color: var(--text-faint);
+  font-size: 13px;
 }
 .peer-overlay {
   position: fixed;
@@ -292,7 +300,7 @@ async function openAttachment(a: Attachment): Promise<void> {
 .peer-overlay:not(.phone) {
   right: 0;
   left: auto;
-  width: min(380px, 45vw);
+  width: min(360px, 45vw);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-float);
 }

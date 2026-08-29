@@ -27,7 +27,7 @@ function timeLabel(ts: number): string {
         <span class="time">{{ timeLabel(conversation.lastMessageAt) }}</span>
       </div>
       <div class="row">
-        <span class="preview">{{ conversation.lastMessagePreview ?? '暂无消息' }}</span>
+        <span class="preview">{{ conversation.lastMessagePreview || '暂无消息' }}</span>
         <span v-if="conversation.unreadCount > 0" class="badge">{{ conversation.unreadCount }}</span>
       </div>
     </div>
@@ -38,11 +38,9 @@ function timeLabel(ts: number): string {
 .item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 12px;
+  padding: 11px 16px;
   cursor: pointer;
-  border-radius: var(--radius);
-  transition: background 0.12s;
 }
 .item:hover {
   background: var(--bg-hover);
@@ -84,14 +82,14 @@ function timeLabel(ts: number): string {
 }
 .badge {
   flex: none;
-  min-width: 18px;
-  height: 18px;
+  min-width: 17px;
+  height: 17px;
   padding: 0 5px;
-  border-radius: var(--radius-full);
+  border-radius: 8px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;

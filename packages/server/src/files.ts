@@ -2,7 +2,15 @@
  * 文件存储：上传（流式 + 增量 SHA-256）、下载（支持 HTTP Range，视频可拖动进度）。
  */
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream, readdirSync, statSync } from 'node:fs'
+import {
+  closeSync,
+  createReadStream,
+  createWriteStream,
+  openSync,
+  readSync,
+  readdirSync,
+  statSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { once } from 'node:events'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -39,7 +47,7 @@ export async function saveUpload(
   return {
     id: fileId,
     name: data.filename ?? fileId,
-    mime: data.mimetype ?? 'application/octet-stream',
+    mime: sniffMime(dest, data.mimetype ?? 'application/octet-stream'),
     size,
     sha256: hash.digest('hex'),
     relPath: fileId,
@@ -61,8 +69,9 @@ export function registerFileRoutes(
 
   app.get<{ Params: { userId: string } }>('/files/a/:userId', async (req, reply) => {
     const user = db.getUser(req.params.userId)
-    if (!user || !user.avatarUrl) return reply.code(404).send({ error: 'no avatar' })
+    if (!user) return reply.code(404).send({ error: 'no avatar' })
     // 磁盘文件带扩展名（u_xxx.png），URL 不带 —— 按前缀扫描实际文件
+    // 重装后 users.avatarUrl 可能为空，但文件还在，照样提供
     let name: string | undefined
     for (const f of readdirSync(avatarDir)) {
       if (f.startsWith(`${req.params.userId}.`)) {
@@ -95,7 +104,7 @@ export function registerFileRoutes(
     try {
       const stat = statSync(file.path)
       const range = reply.request.headers.range
-      reply.header('Content-Type', file.mime)
+      reply.header('Content-Type', sniffMime(file.path, file.mime))
       reply.header('Accept-Ranges', 'bytes')
       if (range) {
         const m = /^bytes=(\d*)-(\d*)$/.exec(range)
@@ -132,12 +141,32 @@ function mimeFromName(name: string): string {
     webp: 'image/webp',
     gif: 'image/gif',
     mp4: 'video/mp4',
+    m4v: 'video/mp4',
     webm: 'video/webm',
     mov: 'video/quicktime',
     mkv: 'video/x-matroska',
+    '3gp': 'video/3gpp',
     mp3: 'audio/mpeg',
     pdf: 'application/pdf',
     zip: 'application/zip',
   }
   return (ext && map[ext]) || 'application/octet-stream'
+}
+
+function sniffMime(filePath: string, fallback: string): string {
+  if (fallback && fallback !== 'application/octet-stream') return fallback
+  const head = Buffer.alloc(16)
+  const fd = openSync(filePath, 'r')
+  try {
+    readSync(fd, head, 0, 16, 0)
+  } finally {
+    closeSync(fd)
+  }
+  if (head[0] === 0xff && head[1] === 0xd8) return 'image/jpeg'
+  if (head[0] === 0x89 && head[1] === 0x50) return 'image/png'
+  if (head[0] === 0x47 && head[1] === 0x49) return 'image/gif'
+  if (head[0] === 0x52 && head[8] === 0x57 && head[9] === 0x45) return 'image/webp'
+  if (head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) return 'video/mp4'
+  if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf) return 'video/webm'
+  return fallback
 }

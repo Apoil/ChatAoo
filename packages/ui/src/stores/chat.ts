@@ -9,7 +9,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref, shallowRef } from 'vue'
-import type { ChatSession, FriendRecord } from '@chataoo/app-core'
+import { inferKind, inferMime, type ChatSession, type FriendRecord } from '@chataoo/app-core'
 import type { Conversation, Message, Profile } from '@chataoo/shared'
 import type { LanPeerInfo } from '@chataoo/app-core'
 
@@ -25,6 +25,7 @@ export const useChatStore = defineStore('chat', () => {
   const presence = ref<Record<string, boolean>>({})
   const lanPeers = ref<Record<string, LanPeerInfo>>({})
   const activeConversationId = ref<string | null>(null)
+  const mediaTick = ref(0)
 
   let unsubs: (() => void)[] = []
 
@@ -38,14 +39,10 @@ export const useChatStore = defineStore('chat', () => {
     unsubs.push(
       s.bus.on('auth', ({ authed: a }) => {
         authed.value = a
+        if (a) void refreshProfiles()
       }),
       s.bus.on('message', (m) => {
-        const list = messages.value[m.conversationId] ?? []
-        if (!list.some((x) => x.id === m.id)) {
-          messages.value[m.conversationId] = [...list, m].sort((a, b) => a.createdAt - b.createdAt)
-        } else {
-          messages.value[m.conversationId] = list.map((x) => (x.id === m.id ? m : x))
-        }
+        upsertLocalMessage(m)
         void refreshConversations()
       }),
       s.bus.on('message-status', ({ id, status }) => {
@@ -71,38 +68,60 @@ export const useChatStore = defineStore('chat', () => {
         else delete lanPeers.value[info.userId]
       }),
       s.bus.on('online', (o) => (online.value = o)),
+      s.bus.on('media-cached', ({ sha256 }) => markAttachmentCached(sha256)),
+      s.bus.on('lan-file', ({ sha256 }) => markAttachmentCached(sha256)),
+      s.bus.on('message-deleted', ({ id, conversationId, revoked }) => {
+        if (revoked) return
+        const list = messages.value[conversationId]
+        if (list) messages.value[conversationId] = list.filter((m) => m.id !== id)
+        void refreshConversations()
+      }),
     )
 
-    await refreshConversations()
     await refreshFriends()
     await refreshProfiles()
+    await refreshConversations()
     ready.value = true
   }
 
   async function refreshFriends(): Promise<void> {
     if (!session.value) return
-    friends.value = await session.value.store.friendsList()
+    friends.value = (await session.value.store.friendsList()).filter((f) => f.status !== 'none')
   }
 
   async function refreshConversations(): Promise<void> {
     if (!session.value) return
-    conversations.value = await session.value.conversations()
+    const all = await session.value.conversations()
+    conversations.value = all.filter((c) => {
+      const peer = peerOf(c.id)
+      return !!peer && friends.value.some((f) => f.userId === peer)
+    })
   }
 
   async function refreshProfiles(): Promise<void> {
-    if (!session.value) return
+    if (!session.value?.authed || !session.value.identity) return
+    const me = session.value.me.userId
+    const self = await session.value.store.profGet(me)
+    if (self) profiles.value[me] = self
     for (const p of await session.value.profiles()) {
       profiles.value[p.userId] = p
     }
   }
 
-  async function openConversation(peerId: string): Promise<void> {
+  async function openConversation(idOrPeer: string): Promise<void> {
     const s = session.value
     if (!s) return
-    const convId = peerId.startsWith('c_') ? peerId : convIdOf(peerId)
+    let peer = idOrPeer.includes('__') ? peerOf(idOrPeer) : idOrPeer
+    if (!peer) return
+    if (!friends.value.some((f) => f.userId === peer)) {
+      const ghostName = profileOf(peer)?.displayName
+      const hit = friends.value.find((f) => profileOf(f.userId)?.displayName === ghostName)
+      if (hit) peer = hit.userId
+    }
+    const convId = await s.ensureDirectConversation(peer)
     activeConversationId.value = convId
     s.setActiveConversation(convId)
-    if (!messages.value[convId]) messages.value[convId] = []
+    await refreshConversations()
     messages.value[convId] = await s.messagesIn(convId)
   }
 
@@ -119,15 +138,35 @@ export const useChatStore = defineStore('chat', () => {
     return !!presence.value[userId] || !!lanPeers.value[userId]?.online
   }
 
+  function upsertLocalMessage(msg: Message): void {
+    const list = messages.value[msg.conversationId] ?? []
+    if (list.some((x) => x.id === msg.id)) {
+      messages.value[msg.conversationId] = list.map((x) => (x.id === msg.id ? msg : x))
+    } else {
+      messages.value[msg.conversationId] = [...list, msg].sort((a, b) => a.createdAt - b.createdAt)
+    }
+  }
+
   async function sendText(text: string): Promise<void> {
     const s = session.value
     const active = activeConversationId.value
     if (!s || !active) return
     const peer = peerOf(active)
     if (!peer) return
-    const msg = await s.sendText(peer, text)
-    const list = messages.value[active] ?? []
-    messages.value[active] = [...list, msg]
+    upsertLocalMessage(await s.sendText(peer, text))
+  }
+
+  function markAttachmentCached(sha256: string): void {
+    mediaTick.value++
+    for (const key of Object.keys(messages.value)) {
+      const list = messages.value[key] ?? []
+      if (!list.some((m) => m.attachment?.sha256 === sha256)) continue
+      messages.value[key] = list.map((m) =>
+        m.attachment?.sha256 === sha256
+          ? { ...m, attachment: { ...m.attachment, cached: true } }
+          : m,
+      )
+    }
   }
 
   async function sendFiles(files: { blob: Blob; name: string }[]): Promise<void> {
@@ -137,17 +176,21 @@ export const useChatStore = defineStore('chat', () => {
     const peer = peerOf(active)
     if (!peer) return
     for (const f of files) {
-      const kind = (f.name.match(/\.(png|jpe?g|webp|gif|bmp)$/i) ? 'image'
-        : f.name.match(/\.(mp4|webm|mov|mkv|avi)$/i) ? 'video'
-        : f.name.match(/\.(mp3|wav|ogg|m4a)$/i) ? 'audio' : 'file') as 'image' | 'video' | 'audio' | 'file'
-      const msg = await s.sendAttachment(peer, {
-        blob: f.blob,
-        name: f.name,
-        kind,
-        mimeType: f.blob.type || 'application/octet-stream',
-      })
-      const list = messages.value[active] ?? []
-      messages.value[active] = [...list, msg]
+      const mime = inferMime(f.name, f.blob.type)
+      const kind = inferKind(f.name, mime)
+      const path = f.blob instanceof File ? s.platform.media.pathOfFile?.(f.blob) : undefined
+      try {
+        const msg = await s.sendAttachment(peer, {
+          blob: f.blob,
+          name: f.name || (kind === 'video' ? 'video.mp4' : kind === 'image' ? 'image.jpg' : 'file'),
+          kind,
+          mimeType: mime,
+          path,
+        })
+        upsertLocalMessage(msg)
+      } catch (e) {
+        console.error('send file failed:', e)
+      }
     }
   }
 
@@ -157,6 +200,14 @@ export const useChatStore = defineStore('chat', () => {
     const parts = convId.split('__')
     if (parts.length !== 2) return null
     return parts[0] === s.me.userId ? parts[1]! : parts[0]!
+  }
+
+  async function hideMessage(id: string): Promise<void> {
+    await session.value?.hideMessage(id)
+  }
+
+  async function revokeMessage(id: string): Promise<void> {
+    await session.value?.revokeMessage(id)
   }
 
   async function loadHistory(before: number): Promise<void> {
@@ -179,6 +230,7 @@ export const useChatStore = defineStore('chat', () => {
     presence,
     lanPeers,
     activeConversationId,
+    mediaTick,
     init,
     openConversation,
     refreshConversations,
@@ -188,6 +240,8 @@ export const useChatStore = defineStore('chat', () => {
     isPeerOnline,
     sendText,
     sendFiles,
+    hideMessage,
+    revokeMessage,
     loadHistory,
     peerOf,
   }

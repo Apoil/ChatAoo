@@ -2,8 +2,11 @@
  * Electron 主进程：窗口、媒体缓存协议（chataoo-media://）、LAN、IPC。
  */
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, } from 'electron';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync, } from 'node:fs';
 import { join } from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { LanMain } from './lan.js';
 const MEDIA_SCHEME = 'chataoo-media';
@@ -14,7 +17,16 @@ const APP_SCHEME = 'app';
 //  - chataoo-media://：本地媒体缓存
 protocol.registerSchemesAsPrivileged([
     { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
-    { scheme: MEDIA_SCHEME, privileges: { secure: true, supportFetchAPI: true, stream: true } },
+    {
+        scheme: MEDIA_SCHEME,
+        privileges: {
+            standard: true,
+            secure: true,
+            supportFetchAPI: true,
+            stream: true,
+            corsEnabled: true,
+        },
+    },
 ]);
 // 聊天类 UI 无需 GPU 合成加速；禁用可规避部分显卡驱动的渲染进程崩溃
 app.disableHardwareAcceleration();
@@ -45,6 +57,80 @@ function ensureMediaDir() {
     mkdirSync(mediaDir, { recursive: true });
     return mediaDir;
 }
+function parseMediaUrl(reqUrl) {
+    try {
+        const u = new URL(reqUrl);
+        const hash = u.hostname === 'local' ? u.pathname.replace(/^\/+|\/+$/g, '') : u.hostname;
+        if (!/^[a-f0-9]{64}$/i.test(hash))
+            return null;
+        return { hash, mime: u.searchParams.get('t') || 'application/octet-stream' };
+    }
+    catch {
+        return null;
+    }
+}
+function sniffMime(filePath, fallback) {
+    if (fallback && fallback !== 'application/octet-stream')
+        return fallback;
+    const head = Buffer.alloc(16);
+    const fd = openSync(filePath, 'r');
+    try {
+        readSync(fd, head, 0, 16, 0);
+    }
+    finally {
+        closeSync(fd);
+    }
+    if (head[0] === 0xff && head[1] === 0xd8)
+        return 'image/jpeg';
+    if (head[0] === 0x89 && head[1] === 0x50)
+        return 'image/png';
+    if (head[0] === 0x47 && head[1] === 0x49)
+        return 'image/gif';
+    if (head[0] === 0x52 && head[8] === 0x57 && head[9] === 0x45)
+        return 'image/webp';
+    if (head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70)
+        return 'video/mp4';
+    if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf)
+        return 'video/webm';
+    return fallback;
+}
+function serveMedia(req) {
+    const parsed = parseMediaUrl(req.url);
+    if (!parsed)
+        return new Response('bad media url', { status: 400 });
+    const filePath = join(ensureMediaDir(), parsed.hash);
+    if (!existsSync(filePath))
+        return new Response('not found', { status: 404 });
+    const mime = sniffMime(filePath, parsed.mime);
+    const { size } = statSync(filePath);
+    let start = 0;
+    let end = size - 1;
+    let status = 200;
+    const range = req.headers.get('range');
+    if (range) {
+        const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+        if (m) {
+            start = m[1] ? Number(m[1]) : 0;
+            end = m[2] ? Number(m[2]) : size - 1;
+            if (start >= size || start > end) {
+                return new Response(null, {
+                    status: 416,
+                    headers: { 'Content-Range': `bytes */${size}`, 'Accept-Ranges': 'bytes' },
+                });
+            }
+            status = 206;
+        }
+    }
+    const headers = {
+        'Content-Type': mime,
+        'Content-Length': String(end - start + 1),
+        'Accept-Ranges': 'bytes',
+    };
+    if (status === 206)
+        headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+    const stream = createReadStream(filePath, { start, end });
+    return new Response(Readable.toWeb(stream), { status, headers });
+}
 function createWindow() {
     // 图标：开发时在仓库根 assets/，打包后随应用分发
     const iconCandidates = [
@@ -58,14 +144,14 @@ function createWindow() {
         minWidth: LOGIN_MIN_W,
         minHeight: LOGIN_MIN_H,
         title: 'ChatAoo',
-        backgroundColor: '#111417',
+        backgroundColor: '#f3eee6',
         icon: iconPath,
         autoHideMenuBar: true,
         // 无边框 + 系统标题栏按钮覆盖层（颜色与主题一致）
         titleBarStyle: 'hidden',
         titleBarOverlay: {
-            color: '#171b20',
-            symbolColor: '#9aa4b1',
+            color: '#faf7f2',
+            symbolColor: '#6a645a',
             height: 44,
         },
         webPreferences: {
@@ -73,6 +159,7 @@ function createWindow() {
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
+            autoplayPolicy: 'no-user-gesture-required',
         },
     });
     const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -108,13 +195,27 @@ function createWindow() {
     });
 }
 /* ---------------- 媒体缓存 ---------------- */
-ipcMain.handle('media:has', (_e, sha) => existsSync(join(ensureMediaDir(), sha)));
+function mediaFile(sha) {
+    if (typeof sha !== 'string' || !/^[a-f0-9]{64}$/i.test(sha))
+        return null;
+    return join(ensureMediaDir(), sha);
+}
+ipcMain.handle('media:has', (_e, sha) => {
+    const p = mediaFile(sha);
+    return !!p && existsSync(p);
+});
 ipcMain.handle('media:write', (_e, sha, buf) => {
-    writeFileSync(join(ensureMediaDir(), sha), Buffer.from(buf));
+    const p = mediaFile(sha);
+    if (!p)
+        throw new Error('invalid media hash');
+    writeFileSync(p, Buffer.from(buf));
 });
 ipcMain.handle('media:read', (_e, sha) => {
-    const p = join(ensureMediaDir(), sha);
-    return existsSync(p) ? readFileSync(p).buffer : null;
+    const p = mediaFile(sha);
+    if (!p || !existsSync(p))
+        return null;
+    const buf = readFileSync(p);
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 });
 ipcMain.handle('media:cache', async (_e, url, sha) => {
     try {
@@ -128,6 +229,26 @@ ipcMain.handle('media:cache', async (_e, url, sha) => {
     catch {
         return false;
     }
+});
+ipcMain.handle('media:importPath', async (_e, srcPath) => {
+    const dir = ensureMediaDir();
+    const tmp = join(dir, `.in-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const hash = createHash('sha256');
+    let size = 0;
+    await pipeline(createReadStream(srcPath), new Transform({
+        transform(chunk, _enc, cb) {
+            hash.update(chunk);
+            size += chunk.length;
+            cb(null, chunk);
+        },
+    }), createWriteStream(tmp));
+    const sha256 = hash.digest('hex');
+    const dest = join(dir, sha256);
+    if (existsSync(dest))
+        unlinkSync(tmp);
+    else
+        renameSync(tmp, dest);
+    return { sha256, size };
 });
 /* ---------------- LAN ---------------- */
 ipcMain.handle('lan:start', async (e) => {
@@ -145,15 +266,28 @@ ipcMain.handle('lan:closeConn', (_e, connId) => lan?.closeConn(connId));
 /* ---------------- 系统能力 ---------------- */
 ipcMain.handle('app:openExternal', (_e, url) => shell.openExternal(url));
 ipcMain.handle('app:saveFile', async (_e, name, url) => {
-    const result = await dialog.showSaveDialog(win ?? undefined, { defaultPath: name });
+    if (!win)
+        return 'cancelled';
+    const result = await dialog.showSaveDialog(win, { defaultPath: name || 'file' });
     if (result.canceled || !result.filePath)
-        return;
+        return 'cancelled';
+    if (url.startsWith(`${MEDIA_SCHEME}://`)) {
+        const parsed = parseMediaUrl(url);
+        if (parsed) {
+            const src = join(ensureMediaDir(), parsed.hash);
+            if (existsSync(src)) {
+                copyFileSync(src, result.filePath);
+                void shell.showItemInFolder(result.filePath);
+                return 'saved';
+            }
+        }
+    }
     const res = await net.fetch(url);
     if (!res.ok)
         throw new Error(`download failed: ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    writeFileSync(result.filePath, buf);
-    void shell.openPath(result.filePath);
+    writeFileSync(result.filePath, Buffer.from(await res.arrayBuffer()));
+    void shell.showItemInFolder(result.filePath);
+    return 'saved';
 });
 ipcMain.handle('win:resize', (_e, mode) => resizeWindow(mode));
 /* ---------------- 启动 ---------------- */
@@ -167,10 +301,7 @@ void app.whenReady().then(() => {
             path = '/' + path;
         return net.fetch(pathToFileURL(join(distDir, path)).toString());
     });
-    protocol.handle(MEDIA_SCHEME, (req) => {
-        const hash = req.url.replace(`${MEDIA_SCHEME}://`, '').split('?')[0] ?? '';
-        return net.fetch(pathToFileURL(join(ensureMediaDir(), hash)).toString());
-    });
+    protocol.handle(MEDIA_SCHEME, (req) => serveMedia(req));
     createWindow();
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0)

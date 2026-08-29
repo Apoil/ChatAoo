@@ -7,6 +7,7 @@ import {
   ChatInput,
   ConversationItem,
   FriendItem,
+  Icon,
   LoginView,
   logoUrl,
   MediaViewer,
@@ -22,10 +23,12 @@ const tab = ref<'chats' | 'friends' | 'profile'>('chats')
 const viewing = ref<{ attachment: Attachment; url: string | null } | null>(null)
 const peerProfileId = ref<string | null>(null)
 
-const activeConv = computed(() => store.conversations.find((c) => c.id === store.activeConversationId))
 const peerId = computed(() => (store.activeConversationId ? store.peerOf(store.activeConversationId) : null))
+const chatting = computed(() => !!store.activeConversationId && !!peerId.value)
 const peerProfile = computed(() => (peerId.value ? store.profileOf(peerId.value) : undefined))
 const peerOnline = computed(() => (peerId.value ? store.isPeerOnline(peerId.value) : false))
+const me = computed(() => (store.session ? store.profileOf(store.session.me.userId) : undefined))
+const sideTitle = computed(() => (tab.value === 'chats' ? '消息' : tab.value === 'friends' ? '好友' : '我'))
 
 function friendStatusOf(userId: string): string {
   return store.friends.find((f) => f.userId === userId)?.status ?? 'none'
@@ -39,11 +42,17 @@ onMounted(async () => {
   }
 })
 
-// 登录状态 ↔ 窗口尺寸：登录小窗 / 聊天大窗
 watch(
   () => store.authed,
   (a) => {
     void window.chataoo?.win.resize(a ? 'chat' : 'login')
+  },
+)
+
+watch(
+  () => store.activeConversationId,
+  (id) => {
+    if (id) tab.value = 'chats'
   },
 )
 
@@ -55,23 +64,34 @@ async function openAttachment(a: Attachment): Promise<void> {
 
 <template>
   <div class="shell">
-    <!-- 登录门控 -->
     <LoginView v-if="!store.authed" :allow-server-edit="true" @done="store.refreshConversations()" />
 
     <template v-else>
-      <!-- 侧栏（顶部为窗口拖拽区） -->
-      <aside class="sidebar">
-        <div class="titlebar">
-          <div class="brand drag">
-            <img :src="logoUrl" class="logo" alt="ChatAoo" />
-            <span class="brand-name">ChatAoo</span>
-            <span class="dot-ind" :class="{ on: store.online }" :title="store.online ? '服务器在线' : '离线（局域网模式）'" />
-          </div>
+      <nav class="rail">
+        <div class="rail-brand drag">
+          <img :src="logoUrl" class="logo" alt="ChatAoo" />
         </div>
-        <div class="tabs no-drag">
-          <button :class="{ active: tab === 'chats' }" @click="tab = 'chats'">会话</button>
-          <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">好友</button>
-          <button :class="{ active: tab === 'profile' }" @click="tab = 'profile'">我的</button>
+        <div class="rail-tabs no-drag">
+          <button :class="{ active: tab === 'chats' }" title="消息" @click="tab = 'chats'">
+            <Icon name="chat" :size="20" />
+            <span>消息</span>
+          </button>
+          <button :class="{ active: tab === 'friends' }" title="好友" @click="tab = 'friends'">
+            <Icon name="users" :size="20" />
+            <span>好友</span>
+          </button>
+        </div>
+        <div class="rail-foot no-drag">
+          <span class="net" :class="{ on: store.online }" :title="store.online ? '服务器在线' : '离线（局域网）'" />
+          <button class="me" :class="{ active: tab === 'profile' }" title="我" @click="tab = 'profile'">
+            <Avatar :profile="me" :size="32" />
+          </button>
+        </div>
+      </nav>
+
+      <aside class="sidebar">
+        <div class="side-head drag">
+          <h1>{{ sideTitle }}</h1>
         </div>
 
         <div v-if="tab === 'chats'" class="list no-drag">
@@ -81,7 +101,7 @@ async function openAttachment(a: Attachment): Promise<void> {
             :conversation="c"
             @click="store.openConversation(c.id)"
           />
-          <div v-if="!store.conversations.length" class="empty">从「好友」页选择好友开始聊天</div>
+          <p v-if="!store.conversations.length" class="empty-hint">还没有会话。去「好友」里挑一个人开始聊。</p>
         </div>
 
         <div v-else-if="tab === 'friends'" class="list no-drag">
@@ -89,48 +109,41 @@ async function openAttachment(a: Attachment): Promise<void> {
           <FriendItem
             v-for="f in store.friends"
             :key="f.userId"
+            :user-id="f.userId"
             :profile="store.profileOf(f.userId)"
             :friend-status="friendStatusOf(f.userId)"
           />
-          <div v-if="!store.friends.length" class="empty">
-            还没有好友。把用户名告诉朋友，或在上方输入对方的用户名添加。
-          </div>
+          <p v-if="!store.friends.length" class="empty-hint">把你的用户名发给朋友，或在上方输入对方的用户名。</p>
         </div>
 
         <div v-else class="profile-wrap no-drag">
-          <ProfilePage @close="tab = 'chats'" />
+          <ProfilePage :show-back="false" />
         </div>
       </aside>
 
-      <!-- 聊天区 -->
       <main class="chat">
-        <!-- 顶部标题栏拖拽区（与侧栏标题栏/窗口控件同行） -->
-        <div class="chat-titlebar" />
-
-        <template v-if="activeConv && peerId">
-          <header class="chat-head">
-            <button class="peer" title="查看资料" @click="peerProfileId = peerId">
-              <Avatar :profile="peerProfile" :online="peerOnline" :size="36" />
-              <div class="peer-meta">
-                <div class="peer-name">{{ peerProfile?.displayName ?? peerId.slice(0, 10) }}</div>
-                <div class="peer-sub">
-                  <span v-if="peerOnline" class="online-txt">在线</span>
-                  <span v-else class="offline-txt">离线</span>
-                </div>
+        <header class="chat-head">
+          <button v-if="chatting && peerId" class="peer no-drag" title="查看资料" @click="peerProfileId = peerId">
+            <Avatar :profile="peerProfile" :online="peerOnline" :size="32" />
+            <div class="peer-meta">
+              <div class="peer-name">{{ peerProfile?.displayName ?? peerId.slice(0, 10) }}</div>
+              <div class="peer-sub">
+                <span v-if="peerOnline" class="online-txt">在线</span>
+                <span v-else>离线</span>
               </div>
-            </button>
-          </header>
-          <MessageList :conversation-id="activeConv.id" @open="openAttachment" />
+            </div>
+          </button>
+          <div class="chat-drag" />
+        </header>
+        <template v-if="chatting && store.activeConversationId">
+          <MessageList :key="store.activeConversationId" :conversation-id="store.activeConversationId" @open="openAttachment" />
           <ChatInput @send-text="(t) => store.sendText(t)" @send-files="(f) => store.sendFiles(f)" />
         </template>
         <div v-else class="placeholder">
-          <img :src="logoUrl" class="ph-logo" alt="" />
-          <p>选择会话开始聊天，或添加局域网好友</p>
-          <p class="ph-sub">离线时，局域网内互为好友的设备可点对点通信</p>
+          <p>从左侧选一个会话</p>
         </div>
       </main>
 
-      <!-- 对方主页 -->
       <div v-if="peerProfileId" class="peer-overlay">
         <ProfilePage
           :peer-id="peerProfileId"
@@ -148,6 +161,7 @@ async function openAttachment(a: Attachment): Promise<void> {
 .shell {
   display: flex;
   height: 100vh;
+  background: var(--bg-sidebar);
 }
 .drag {
   -webkit-app-region: drag;
@@ -155,77 +169,100 @@ async function openAttachment(a: Attachment): Promise<void> {
 .no-drag {
   -webkit-app-region: no-drag;
 }
-.sidebar {
-  width: 300px;
+.rail {
+  width: 68px;
   flex: none;
-  background: var(--bg-sidebar);
-  border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-soft);
 }
-/* 标题栏（44px，与系统窗口控件对齐） */
-.titlebar {
-  height: 44px;
+.rail-brand {
+  height: var(--chrome-h);
   display: flex;
   align-items: center;
-  flex: none;
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 16px;
+  justify-content: center;
   width: 100%;
-  height: 100%;
 }
 .logo {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 7px;
 }
-.brand-name {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+.rail-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 8px 0;
 }
-.dot-ind {
-  width: 9px;
-  height: 9px;
+.rail-tabs button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.rail-tabs button:hover {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+.rail-tabs button.active {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+.rail-foot {
+  margin-top: auto;
+  padding: 12px 0 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.net {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--danger);
-  margin-left: auto;
 }
-.dot-ind.on {
+.net.on {
   background: var(--ok);
 }
-.tabs {
+.me {
+  border-radius: 28%;
+  padding: 0;
+  outline: 2px solid transparent;
+}
+.me.active {
+  outline-color: var(--accent);
+}
+.sidebar {
+  width: 280px;
+  flex: none;
   display: flex;
-  gap: 4px;
-  padding: 0 12px 8px;
+  flex-direction: column;
+  border-right: 1px solid var(--border-soft);
+  background: var(--bg-sidebar);
 }
-.tabs button {
-  flex: 1;
-  padding: 7px 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: 13px;
+.side-head {
+  height: var(--chrome-h);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  flex: none;
+}
+.side-head h1 {
+  margin: 0;
+  font-size: 15px;
   font-weight: 600;
-}
-.tabs button.active {
-  background: var(--bg-active);
-  color: var(--text);
 }
 .list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 12px;
-}
-.empty {
-  color: var(--text-faint);
-  font-size: 13px;
-  text-align: center;
-  padding: 30px 16px;
-  line-height: 1.6;
 }
 .profile-wrap {
   flex: 1;
@@ -237,78 +274,79 @@ async function openAttachment(a: Attachment): Promise<void> {
   display: flex;
   flex-direction: column;
   min-width: 0;
-}
-/* 与窗口控件同行的整条标题栏：可拖拽移动窗口 */
-.chat-titlebar {
-  height: 44px;
-  flex: none;
-  -webkit-app-region: drag;
-  background: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-chat);
 }
 .chat-head {
+  min-height: var(--chrome-h);
+  height: var(--chrome-h);
+  flex: none;
   display: flex;
   align-items: center;
-  padding: 8px 16px;
+  padding: 0 8px 0 12px;
+  padding-right: env(titlebar-area-width, 138px);
+  background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border-soft);
-  background: var(--bg);
+  -webkit-app-region: drag;
+  overflow: hidden;
 }
 .peer {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px;
-  margin: -4px -8px;
-  border-radius: var(--radius);
+  height: 100%;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  flex: none;
+  min-width: max-content;
+  line-height: 1.2;
 }
 .peer:hover {
   background: var(--bg-hover);
 }
 .peer-meta {
   text-align: left;
+  flex: none;
+  min-width: max-content;
 }
 .peer-name {
-  font-weight: 700;
-  font-size: 15px;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+  white-space: nowrap;
 }
 .peer-sub {
-  font-size: 11.5px;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 .online-txt {
   color: var(--ok);
 }
-.offline-txt {
-  color: var(--text-faint);
+.chat-drag {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
 }
 .placeholder {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: var(--text-dim);
-  gap: 8px;
-}
-.ph-logo {
-  width: 96px;
-  height: 96px;
-  border-radius: 24px;
-  opacity: 0.9;
-  margin-bottom: 10px;
-}
-.ph-sub {
   color: var(--text-faint);
-  font-size: 12.5px;
+  font-size: 13px;
+  background: var(--bg-chat);
+  -webkit-app-region: drag;
 }
 .peer-overlay {
   position: fixed;
-  right: 16px;
+  right: 12px;
   top: 52px;
-  bottom: 16px;
-  width: min(380px, 40vw);
+  bottom: 12px;
+  width: min(360px, 38vw);
   background: var(--bg-sidebar);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius);
   box-shadow: var(--shadow-float);
   z-index: 200;
   overflow: hidden;

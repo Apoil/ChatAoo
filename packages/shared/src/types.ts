@@ -54,6 +54,10 @@ export interface Attachment {
   duration?: number
   /** 缩略图 URL / 本地路径 */
   thumbUrl?: string
+  /** 发送中进度 0-100，完成后删除 */
+  uploadProgress?: number
+  /** 发送阶段（仅本地，不上报） */
+  uploadPhase?: 'preparing' | 'uploading' | 'sending'
   createdAt: number
 }
 
@@ -76,6 +80,10 @@ export interface Message {
   /** 服务器分配的单调递增序号（同步游标） */
   seq?: number
   deliveredAt?: number
+  /** 本机删除，不再展示 */
+  hiddenForMe?: boolean
+  /** 双方撤回 */
+  revoked?: boolean
 }
 
 export type ConversationKind = 'direct'

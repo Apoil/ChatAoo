@@ -1,17 +1,63 @@
 /**
  * 移动端桥：Capacitor Filesystem 媒体缓存 + 原生 LAN socket 插件。
  */
+import { Capacitor } from '@capacitor/core'
 import { Directory, Filesystem } from '@capacitor/filesystem'
 import { LanSocket } from '@chataoo/lan-socket'
 import { buildBeacon, type LanAdapter, type LanConn, type MediaStore } from '@chataoo/app-core'
 import type { BeaconPacket, Identity, P2PMsg } from '@chataoo/shared'
 
-/* ---------------- 媒体（应用私有目录，断网可见） ---------------- */
+/* ---------------- 媒体：IndexedDB 保底，Filesystem 可用则再写一份 ---------------- */
+
+const memory = new Map<string, Blob>()
+const objectUrls = new Map<string, string>()
+
+function openMediaDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('chataoo-media', 1)
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains('blobs')) req.result.createObjectStore('blobs')
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function idbPut(sha: string, blob: Blob): Promise<void> {
+  const db = await openMediaDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('blobs', 'readwrite')
+    tx.objectStore('blobs').put(blob, sha)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+async function idbGet(sha: string): Promise<Blob | null> {
+  const db = await openMediaDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('blobs', 'readonly')
+    const req = tx.objectStore('blobs').get(sha)
+    req.onsuccess = () => resolve((req.result as Blob | undefined) ?? null)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+function nativeFs(): boolean {
+  return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Filesystem')
+}
 
 export class CapacitorMedia implements MediaStore {
   platform = 'mobile' as const
 
   async has(sha: string): Promise<boolean> {
+    if (memory.has(sha)) return true
+    try {
+      if (await idbGet(sha)) return true
+    } catch {
+      /* ignore */
+    }
+    if (!nativeFs()) return false
     try {
       await Filesystem.stat({ path: `media/${sha}`, directory: Directory.Data })
       return true
@@ -21,19 +67,60 @@ export class CapacitorMedia implements MediaStore {
   }
 
   async write(sha: string, blob: Blob): Promise<void> {
-    await Filesystem.writeFile({
-      path: `media/${sha}`,
-      directory: Directory.Data,
-      data: await blobToBase64(blob),
-    })
+    memory.set(sha, blob)
+    for (const [k, u] of [...objectUrls]) {
+      if (k === sha || k.startsWith(`${sha}::`)) {
+        URL.revokeObjectURL(u)
+        objectUrls.delete(k)
+      }
+    }
+    try {
+      await idbPut(sha, blob)
+    } catch (e) {
+      console.warn('idb media write failed:', e)
+    }
+    // 大文件转 base64 会 OOM，视频只走 IndexedDB
+    if (!nativeFs() || blob.size > 6 * 1024 * 1024) return
+    try {
+      await Filesystem.mkdir({ path: 'media', directory: Directory.Data, recursive: true })
+    } catch {
+      /* 目录已存在 */
+    }
+    try {
+      await Filesystem.writeFile({
+        path: `media/${sha}`,
+        directory: Directory.Data,
+        data: await blobToBase64(blob),
+        recursive: true,
+      })
+    } catch (e) {
+      console.warn('filesystem write skipped:', e)
+    }
   }
 
-  async url(sha: string): Promise<string> {
+  async url(sha: string, mime = 'application/octet-stream'): Promise<string> {
+    const key = `${sha}::${mime}`
+    const cached = objectUrls.get(key) ?? objectUrls.get(sha)
+    if (cached) return cached
+    let blob = memory.get(sha) ?? (await idbGet(sha).catch(() => null))
+    if (blob) {
+      if (mime && mime !== 'application/octet-stream' && blob.type !== mime) {
+        blob = new Blob([blob], { type: mime })
+      }
+      const u = URL.createObjectURL(blob)
+      objectUrls.set(key, u)
+      return u
+    }
+    if (!nativeFs()) throw new Error('media not found')
     const { uri } = await Filesystem.getUri({ path: `media/${sha}`, directory: Directory.Data })
-    return uri
+    return Capacitor.convertFileSrc(uri)
   }
 
   async read(sha: string): Promise<Blob | null> {
+    if (memory.has(sha)) return memory.get(sha)!
+    const fromIdb = await idbGet(sha).catch(() => null)
+    if (fromIdb) return fromIdb
+    if (!nativeFs()) return null
     try {
       const { data } = await Filesystem.readFile({ path: `media/${sha}`, directory: Directory.Data })
       return typeof data === 'string' ? base64ToBlob(data) : data
@@ -52,6 +139,89 @@ export class CapacitorMedia implements MediaStore {
       return false
     }
   }
+}
+
+function sanitizeFilename(name: string, mime = ''): string {
+  let n = (name || '').replace(/[\\/:*?"<>|]/g, '_').trim()
+  if (!n || n === '-') {
+    const ext =
+      mime === 'image/jpeg' ? 'jpg'
+      : mime === 'image/png' ? 'png'
+      : mime === 'image/webp' ? 'webp'
+      : mime === 'image/gif' ? 'gif'
+      : mime === 'video/mp4' ? 'mp4'
+      : mime === 'video/webm' ? 'webm'
+      : mime.startsWith('image/') ? 'jpg'
+      : mime.startsWith('video/') ? 'mp4'
+      : 'bin'
+    n = `${mime.startsWith('video/') ? 'video' : mime.startsWith('image/') ? 'image' : 'file'}-${Date.now()}.${ext}`
+  }
+  return n
+}
+
+async function blobFromUrl(url: string): Promise<Blob> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`download failed: ${res.status}`)
+  return res.blob()
+}
+
+/** 保存到系统：能分享则走系统分享（可存相册）；否则写入文档目录 */
+export async function saveFileToDevice(name: string, url: string): Promise<'saved' | 'shared' | 'cancelled'> {
+  const blob = await blobFromUrl(url)
+  const mime = blob.type && blob.type !== 'application/octet-stream' ? blob.type : 'application/octet-stream'
+  const safe = sanitizeFilename(name, mime)
+  const file = new File([blob], safe, { type: mime || 'application/octet-stream' })
+
+  try {
+    if (typeof navigator.share === 'function') {
+      if (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: safe })
+        return 'shared'
+      }
+    }
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return 'cancelled'
+  }
+
+  if (!nativeFs()) throw new Error('filesystem unavailable')
+
+  try {
+    await Filesystem.requestPermissions()
+  } catch {
+    /* 部分机型无此权限接口 */
+  }
+
+  const media = mime.startsWith('image/') || mime.startsWith('video/')
+  const attempts: { directory: Directory; path: string }[] = media
+    ? [
+        { directory: Directory.ExternalStorage, path: `Pictures/ChatAoo/${safe}` },
+        { directory: Directory.Documents, path: `ChatAoo/${safe}` },
+      ]
+    : [{ directory: Directory.Documents, path: `ChatAoo/${safe}` }]
+
+  if (blob.size > 8 * 1024 * 1024) {
+    throw new Error('file too large to copy; use share')
+  }
+
+  let lastErr: unknown
+  for (const a of attempts) {
+    try {
+      const dir = a.path.includes('/') ? a.path.slice(0, a.path.lastIndexOf('/')) : ''
+      if (dir) {
+        await Filesystem.mkdir({ path: dir, directory: a.directory, recursive: true }).catch(() => {})
+      }
+      await Filesystem.writeFile({
+        path: a.path,
+        data: await blobToBase64(blob),
+        directory: a.directory,
+        recursive: true,
+      })
+      return 'saved'
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('save failed')
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {

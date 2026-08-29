@@ -1,4 +1,5 @@
 export { default as Avatar } from './components/Avatar.vue'
+export { default as Icon } from './components/Icon.vue'
 export { default as AddFriendBox } from './components/AddFriendBox.vue'
 export { default as ConversationItem } from './components/ConversationItem.vue'
 export { default as MessageBubble } from './components/MessageBubble.vue'

@@ -82,6 +82,13 @@ export class LanManager {
     return !!p && Date.now() - p.lastSeen < 20_000 && !!p.conn
   }
 
+  sendDelete(peerId: string, messageId: string): boolean {
+    const p = this.peers.get(peerId)
+    if (!p?.conn) return false
+    p.conn.send({ type: 'message-delete', messageId } satisfies P2PClientMsg)
+    return true
+  }
+
   /** 通过局域网发送消息（仅好友），返回是否已投递 */
   sendMessageTo(peerId: string, msg: Message): boolean {
     const p = this.peers.get(peerId)
@@ -99,12 +106,12 @@ export class LanManager {
     conn.send({ type: 'file-meta', transferId: attachment.id, attachment } satisfies P2PClientMsg)
     const chunkCount = Math.ceil(buf.length / P2P_CHUNK_SIZE)
     for (let i = 0; i < chunkCount; i++) {
-      const chunk = buf.slice(i * P2P_CHUNK_SIZE, (i + 1) * P2P_CHUNK_SIZE)
+      const chunk = buf.subarray(i * P2P_CHUNK_SIZE, (i + 1) * P2P_CHUNK_SIZE)
       conn.send({
         type: 'file-data',
         transferId: attachment.id,
         offset: i * P2P_CHUNK_SIZE,
-        data: btoa(String.fromCharCode(...chunk)),
+        data: bytesToBase64(chunk),
       } satisfies P2PClientMsg)
       // 让出事件循环，避免大文件阻塞 UI
       if (i % 16 === 0) await new Promise((r) => setTimeout(r, 0))
@@ -219,6 +226,19 @@ export class LanManager {
         conn.send({ type: 'ack', messageId: msg.message.id, ok: true } satisfies P2PServerMsg)
         break
       }
+      case 'message-delete': {
+        const existing = await this.deps.store.msgGet(msg.messageId)
+        if (existing) {
+          existing.revoked = true
+          existing.kind = 'system'
+          existing.text = '消息已撤回'
+          existing.attachment = undefined
+          await this.deps.store.msgPut(existing)
+          this.deps.bus.emit('message', existing)
+          this.deps.bus.emit('message-deleted', { id: existing.id, conversationId: existing.conversationId, revoked: true })
+        }
+        break
+      }
       case 'ack':
         if (msg.ok) {
           this.deps.bus.emit('message-status', { id: msg.messageId, status: 'delivered' })
@@ -254,7 +274,7 @@ export class LanManager {
           conn.send({ type: 'file-cancel', transferId: msg.transferId, reason: 'size mismatch' } satisfies P2PServerMsg)
           return
         }
-        const blob = new Blob(f.chunks, { type: f.mime })
+        const blob = new Blob(f.chunks, { type: f.mime || 'application/octet-stream' })
         await this.deps.media.write(f.sha256, blob)
         // 更新消息附件为已缓存
         for (const m of await this.deps.store.messagesByAttachmentSha(f.sha256)) {
@@ -264,6 +284,7 @@ export class LanManager {
           }
         }
         this.deps.bus.emit('lan-file', { transferId: msg.transferId, sha256: f.sha256, blob, mime: f.mime })
+        this.deps.bus.emit('media-cached', { sha256: f.sha256 })
         this.deps.bus.emit('conversations', {})
         break
       }
@@ -276,4 +297,13 @@ export class LanManager {
         break
     }
   }
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  const step = 0x8000
+  for (let i = 0; i < bytes.length; i += step) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + step))
+  }
+  return btoa(bin)
 }

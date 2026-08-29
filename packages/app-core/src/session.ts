@@ -23,7 +23,7 @@ import {
 } from '@chataoo/shared'
 import { Bus } from './bus.js'
 import { LocalStore } from './local-store.js'
-import { sha256OfBlob, type MediaStore } from './media.js'
+import { parseAttachment, sha256OfBlob, typedBlob, type MediaStore } from './media.js'
 import { ServerApi } from './server-api.js'
 import { SyncEngine } from './sync-engine.js'
 import { LanManager } from './lan/manager.js'
@@ -36,8 +36,8 @@ export interface ChatPlatform {
   media: MediaStore
   /** 用系统方式打开外部链接/文件 */
   openExternal(url: string): void
-  /** 保存/打开附件（桌面：另存为对话框；移动：系统分享） */
-  saveFile?(name: string, url: string): void
+  /** 保存附件。返回 saved/shared/cancelled，便于界面提示 */
+  saveFile?(name: string, url: string): void | Promise<void | 'saved' | 'shared' | 'cancelled'>
 }
 
 export class ChatSession {
@@ -240,25 +240,12 @@ export class ChatSession {
     const local = await this.store.msgsIn(conversationId, before, limit)
     if (before || local.length >= limit) return local
     // 首次打开会话：在线时再向服务器拉取更早历史
-    if (this.online) {
+    if (this.isOnline) {
       try {
-        const { messages } = await this.api.history(conversationId, Date.now(), limit)
+        const { messages } = await this.api.history(conversationId, Number.MAX_SAFE_INTEGER, limit)
         if (messages.length) {
           for (const sm of messages) {
-            await this.sync.ingestMessage(
-              {
-                id: sm.id,
-                conversationId: sm.conversationId,
-                senderId: sm.senderId,
-                kind: sm.kind,
-                text: sm.text,
-                attachment: sm.attachment,
-                createdAt: sm.createdAt,
-                status: 'sent',
-                seq: sm.seq,
-              },
-              { unread: false },
-            )
+            await this.sync.ingestFromServer(sm, false)
           }
           return this.store.msgsIn(conversationId, before, limit)
         }
@@ -301,34 +288,133 @@ export class ChatSession {
 
   async sendAttachment(
     peerId: string,
-    file: { blob: Blob; name: string; kind: AttachmentKind; mimeType: string },
+    file: { blob: Blob; name: string; kind: AttachmentKind; mimeType: string; path?: string },
   ): Promise<Message> {
-    const sha256 = await sha256OfBlob(file.blob)
     const media = this.platform.media
-    if (!(await media.has(sha256))) {
-      await media.write(sha256, file.blob)
-    }
+    const blob = typedBlob(file.blob, file.mimeType)
+    const convId = directConversationId(this.identity.userId, peerId)
+    const now = Date.now()
     const attachment: Attachment = {
       id: randomId('a'),
       kind: file.kind,
       name: file.name,
       mimeType: file.mimeType,
-      size: file.blob.size,
-      sha256,
+      size: Number.isFinite(blob.size) ? blob.size : 0,
+      sha256: '',
       cached: true,
-      createdAt: Date.now(),
+      createdAt: now,
+      uploadProgress: 0,
+      uploadPhase: 'preparing',
+      thumbUrl: URL.createObjectURL(blob),
     }
-    const convId = directConversationId(this.identity.userId, peerId)
     const msg: Message = {
       id: randomId('m'),
       conversationId: convId,
       senderId: this.identity.userId,
       kind: 'attachment',
       attachment,
-      createdAt: Date.now(),
+      createdAt: now,
       status: 'pending',
     }
-    return this.sendMessage(peerId, msg, attachment)
+    await this.store.msgPut(msg)
+    await this.store.convTouch(
+      convId,
+      `[${file.kind === 'file' ? '文件' : file.kind === 'image' ? '图片' : file.kind === 'audio' ? '音频' : '视频'}]`,
+      now,
+    )
+    this.bus.emit('message', msg)
+    this.bus.emit('conversations', { conversationId: convId })
+
+    const patchAtt = async (partial: Partial<Attachment>, status?: Message['status']): Promise<Message> => {
+      const cur = (await this.store.msgGet(msg.id)) ?? msg
+      if (cur.attachment) {
+        cur.attachment = { ...cur.attachment, ...partial }
+        if (partial.uploadProgress === undefined) delete cur.attachment.uploadProgress
+        if (partial.uploadPhase === undefined) delete cur.attachment.uploadPhase
+      }
+      if (status) cur.status = status
+      await this.store.msgPut(cur)
+      this.bus.emit('message', cur)
+      this.bus.emit('upload-progress', {
+        id: cur.id,
+        progress: cur.attachment?.uploadProgress ?? 100,
+        phase: cur.attachment?.uploadPhase,
+      })
+      return cur
+    }
+
+    try {
+      let sha256: string
+      let size = attachment.size
+      if (file.path && media.importPath) {
+        const imported = await media.importPath(file.path)
+        sha256 = imported.sha256
+        size = imported.size
+      } else {
+        sha256 = await sha256OfBlob(blob)
+        if (!(await media.has(sha256))) await media.write(sha256, blob)
+      }
+      let cur = await patchAtt({ sha256, size, uploadProgress: 8, uploadPhase: 'uploading' })
+
+      if (this.sync?.online) {
+        const local = (await media.read(sha256)) ?? blob
+        const typed =
+          local.type && local.type !== 'application/octet-stream'
+            ? local
+            : new Blob([local], { type: file.mimeType })
+        const up = await this.api.uploadFile(typed, file.name, file.kind, (pct) => {
+          void patchAtt({ uploadProgress: 8 + Math.round(pct * 0.9), uploadPhase: 'uploading' })
+        })
+        cur = await patchAtt({ url: up.url, uploadProgress: 98, uploadPhase: 'sending' })
+      }
+
+      cur = await patchAtt({ sha256, cached: true })
+      if (cur.attachment) {
+        delete cur.attachment.uploadProgress
+        delete cur.attachment.uploadPhase
+        await this.store.msgPut(cur)
+        this.bus.emit('message', cur)
+      }
+      return this.sendMessage(peerId, cur, cur.attachment)
+    } catch (e) {
+      await patchAtt({}, 'failed')
+      throw e
+    }
+  }
+
+  async hideMessage(id: string): Promise<void> {
+    const m = await this.store.msgGet(id)
+    if (!m) return
+    m.hiddenForMe = true
+    await this.store.msgPut(m)
+    this.bus.emit('message-deleted', { id, conversationId: m.conversationId })
+  }
+
+  async revokeMessage(id: string): Promise<void> {
+    const m = await this.store.msgGet(id)
+    if (!m || m.senderId !== this.identity.userId) return
+    await this.applyRevoke(m)
+    const peer = m.conversationId.split('__').find((p) => p && p !== this.identity.userId)
+    if (peer && this.lan?.isOnline(peer)) this.lan.sendDelete(peer, id)
+    if (this.sync?.online) {
+      try {
+        await this.api.deleteMessage(id)
+      } catch {
+        /* 离线撤回已落本地，回连后对端可能仍看到，下次同步再对齐 */
+      }
+    }
+  }
+
+  async applyRevoke(m: Message): Promise<void> {
+    m.revoked = true
+    m.kind = 'system'
+    m.text = '消息已撤回'
+    m.attachment = undefined
+    await this.store.msgPut(m)
+    await this.store.outboxRemove(m.id).catch(() => {})
+    this.bus.emit('message', m)
+    this.bus.emit('message-deleted', { id: m.id, conversationId: m.conversationId, revoked: true })
+    this.bus.emit('conversations', { conversationId: m.conversationId })
   }
 
   private async sendMessage(peerId: string, msg: Message, attachment?: Attachment): Promise<Message> {
@@ -344,10 +430,11 @@ export class ChatSession {
 
     // 局域网好友在线 -> 立即 P2P 投递
     if (this.lan && this.lan.isOnline(peerId)) {
-      this.lan.sendMessageTo(peerId, msg)
-      if (attachment) {
-        const blob = await this.platform.media.read(attachment.sha256)
-        if (blob) void this.lan.sendFile(peerId, attachment, blob)
+      const wireAtt = attachment ? stripClientAttachment(attachment) : undefined
+      this.lan.sendMessageTo(peerId, wireAtt ? { ...msg, attachment: wireAtt } : msg)
+      if (wireAtt?.sha256) {
+        const blob = await this.platform.media.read(wireAtt.sha256)
+        if (blob) void this.lan.sendFile(peerId, wireAtt, blob)
       }
     }
     // 服务器在线 -> 推送（离线时留在 outbox 等待回连）
@@ -368,6 +455,14 @@ export class ChatSession {
   setActiveConversation(conversationId?: string): void {
     this.activeConversationId = conversationId
     if (conversationId) void this.store.convSetUnread(conversationId, 0)
+  }
+
+  /** 点开好友时保证本地已有会话行，否则聊天区找不到会话 */
+  async ensureDirectConversation(peerId: string): Promise<string> {
+    const convId = directConversationId(this.identity.userId, peerId)
+    await this.store.convEnsure(convId, peerId)
+    this.bus.emit('conversations', { conversationId: convId })
+    return convId
   }
 
   /* ---------------- 好友 ---------------- */
@@ -416,13 +511,17 @@ export class ChatSession {
   async setAvatar(blob: Blob, name = 'avatar.png'): Promise<void> {
     const sha256 = await sha256OfBlob(blob)
     const media = this.platform.media
-    if (!(await media.has(sha256))) await media.write(sha256, blob)
+    try {
+      if (!(await media.has(sha256))) await media.write(sha256, blob)
+    } catch (e) {
+      console.warn('avatar local cache failed:', e)
+    }
     let url: string | undefined
     try {
       const r = await this.api.uploadAvatar(blob, name)
       url = r.url
-    } catch {
-      // 离线：仅本地保存，回连后由 UI 提示重试
+    } catch (e) {
+      if (!(await media.has(sha256).catch(() => false))) throw e
     }
     const p = (await this.store.profGet(this.identity.userId)) ?? {
       userId: this.identity.userId,
@@ -450,18 +549,29 @@ export class ChatSession {
 
   /** 附件展示 URL：本地缓存优先，其次服务器 */
   async attachmentUrlOf(attachment: Attachment): Promise<string | null> {
-    if (attachment.cached && attachment.sha256 && (await this.platform.media.has(attachment.sha256))) {
-      return this.platform.media.url(attachment.sha256, attachment.mimeType)
+    const att = parseAttachment(attachment) ?? attachment
+    if (att.sha256 && (await this.platform.media.has(att.sha256))) {
+      return this.platform.media.url(att.sha256, att.mimeType)
     }
-    if (attachment.url) return this.absoluteUrl(attachment.url)
+    if (att.url) return this.absoluteUrl(att.url)
+    if (att.thumbUrl) return att.thumbUrl
     return null
   }
 
   /** 确保附件已缓存（在线时按需拉取） */
   async ensureAttachment(attachment: Attachment): Promise<void> {
-    if (attachment.cached) return
-    if (attachment.url) {
-      await this.sync.cacheAttachment(attachment.sha256, this.absoluteUrl(attachment.url))
+    const att = parseAttachment(attachment) ?? attachment
+    if (att.sha256 && (await this.platform.media.has(att.sha256))) return
+    let url = att.url
+    if (!url && att.sha256) {
+      try {
+        url = (await this.api.lookupFile(att.sha256)).url
+      } catch {
+        /* 离线或服务器没有这份文件 */
+      }
+    }
+    if (url && att.sha256 && this.sync) {
+      await this.sync.cacheAttachment(att.sha256, this.absoluteUrl(url))
     }
   }
 
@@ -473,4 +583,12 @@ export class ChatSession {
   get isOnline(): boolean {
     return this.sync?.online ?? false
   }
+}
+
+function stripClientAttachment(att: Attachment): Attachment {
+  const next = { ...att }
+  delete next.uploadProgress
+  delete next.uploadPhase
+  if (next.thumbUrl?.startsWith('blob:')) delete next.thumbUrl
+  return next
 }

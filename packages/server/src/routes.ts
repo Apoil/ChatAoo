@@ -3,12 +3,14 @@
  */
 import { join } from 'node:path'
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { readdirSync, renameSync } from 'node:fs'
 import { rename } from 'node:fs/promises'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import {
   directConversationId,
   FILE_PREFIX,
   verifyUserId,
+  type Attachment,
   type AuthResponse,
   type FriendStatus,
   type Message,
@@ -20,7 +22,7 @@ import {
   type SyncResult,
 } from '@chataoo/shared'
 import { bearerToken, newToken } from './auth.js'
-import { toProfile, type Db, type FriendRow, type UserRow } from './db.js'
+import { rowToMessage, toProfile, type Db, type FileRow, type FriendRow, type UserRow } from './db.js'
 import type { Hub } from './hub.js'
 import { registerFileRoutes, saveUpload } from './files.js'
 
@@ -60,23 +62,87 @@ function verifyPassword(password: string, stored: string): boolean {
   return calc.length === expected.length && timingSafeEqual(calc, expected)
 }
 
-function toServerMessage(m: Message): ServerMessage {
+function asAttachment(raw: unknown): Attachment | undefined {
+  if (!raw) return undefined
+  let v: unknown = raw
+  for (let i = 0; i < 2 && typeof v === 'string'; i++) {
+    try {
+      v = JSON.parse(v)
+    } catch {
+      return undefined
+    }
+  }
+  if (!v || typeof v !== 'object') return undefined
+  return v as Attachment
+}
+
+function kindFromFile(f: FileRow, fallback: Attachment['kind']): Attachment['kind'] {
+  if (f.kind === 'image' || f.kind === 'video' || f.kind === 'audio' || f.kind === 'file') return f.kind
+  if (f.mime.startsWith('image/')) return 'image'
+  if (f.mime.startsWith('video/')) return 'video'
+  if (f.mime.startsWith('audio/')) return 'audio'
+  return fallback
+}
+
+function enrichAttachment(db: Db, raw: unknown): Attachment | undefined {
+  const att = asAttachment(raw)
+  if (!att) return undefined
+  const fromUrl = att.url?.match(/\/files\/m\/([^/?#]+)/)?.[1]
+  const file =
+    (att.sha256 ? db.fileBySha(att.sha256) : undefined) ?? (fromUrl ? db.fileById(fromUrl) : undefined)
+  if (!file) return att
+  return {
+    ...att,
+    url: att.url || `${FILE_PREFIX.message}/${file.id}`,
+    name: att.name || file.name,
+    size: att.size || file.size,
+    mimeType: att.mimeType || file.mime,
+    kind: att.kind && att.kind !== 'file' ? att.kind : kindFromFile(file, att.kind || 'file'),
+    sha256: att.sha256 || file.sha256,
+  }
+}
+
+function toServerMessage(m: Message, db?: Db): ServerMessage {
   return {
     id: m.id,
     conversationId: m.conversationId,
     senderId: m.senderId,
-    kind: m.kind,
-    text: m.text,
-    attachment: m.attachment,
+    kind: m.revoked ? 'system' : m.kind,
+    text: m.revoked ? '消息已撤回' : m.text,
+    attachment: m.revoked ? undefined : db ? enrichAttachment(db, m.attachment) : asAttachment(m.attachment),
     createdAt: m.createdAt,
     seq: m.seq ?? 0,
+    revoked: m.revoked,
   }
+}
+
+function repairUserAvatar(db: Db, avatarDir: string, u: UserRow): UserRow {
+  let found = false
+  try {
+    for (const f of readdirSync(avatarDir)) {
+      if (f.startsWith(`${u.userId}.`)) {
+        found = true
+        break
+      }
+    }
+  } catch {
+    return u
+  }
+  if (!found) return u
+  const expected = `${FILE_PREFIX.avatar}/${u.userId}`
+  if (u.avatarUrl?.startsWith(expected)) return u
+  db.updateUserProfile(u.userId, { avatarUrl: `${expected}?v=${Date.now()}` })
+  return db.getUser(u.userId) ?? u
 }
 
 export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
   const { db, hub } = opts
   const messageDir = join(opts.dataDir, 'files', 'm')
   const avatarDir = join(opts.dataDir, 'files', 'a')
+
+  function publicUser(u: UserRow): ServerUser {
+    return toServerUser(repairUserAvatar(db, avatarDir, u))
+  }
 
   /* ---------------- 认证 ---------------- */
 
@@ -108,7 +174,7 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     const token = newToken()
     db.createToken(token, body.userId)
     const user = db.getUser(body.userId)!
-    const res: AuthResponse = { token, user: toServerUser(user) }
+    const res: AuthResponse = { token, user: publicUser(user) }
     return res
   })
 
@@ -125,7 +191,7 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     }
     const token = newToken()
     db.createToken(token, account.userId)
-    return { token, user: toServerUser(account) }
+    return { token, user: publicUser(account) }
   })
 
   /** 重绑定：新设备用同一账号登录时，把账号绑定到当前设备身份（旧设备数据保留但不再关联） */
@@ -145,12 +211,21 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     if (account.userId === body.userId) {
       return reply.code(400).send({ error: '该设备已是账号绑定设备' })
     }
-    // 重绑定：账号 userId 切换到新设备身份，旧设备全部 token 失效（旧数据保留但不再关联）
-    db.rebindUser(username, account.userId, body.userId, account.displayName)
+    const oldId = account.userId
+    db.rebindUser(username, oldId, body.userId, account.displayName)
+    try {
+      for (const f of readdirSync(avatarDir)) {
+        if (f.startsWith(`${oldId}.`)) {
+          renameSync(join(avatarDir, f), join(avatarDir, `${body.userId}${f.slice(oldId.length)}`))
+        }
+      }
+    } catch {
+      /* 无头像文件 */
+    }
     const token = newToken()
     db.createToken(token, body.userId)
     const user = db.getUser(body.userId)!
-    return { token, user: toServerUser(user) }
+    return { token, user: publicUser(user) }
   })
 
   /** 用户名解析（加好友前查询；不区分大小写） */
@@ -184,7 +259,7 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
   })
 
   app.get('/api/v1/me', async (req) => {
-    return { user: toServerUser(db.getUser((req as AuthedReq).userId!)!) }
+    return { user: publicUser(db.getUser((req as AuthedReq).userId!)!) }
   })
 
   /* ---------------- 好友 ---------------- */
@@ -199,12 +274,11 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     const { status, updatedAt } = db.requestFriend(me, body.userId)
     const meRow = db.getUser(me)!
     if (status === 'friends') {
-      // 双向确认：通知双方
-      hub.sendTo(body.userId, { type: 'friend', friend: friendEntry(meRow) })
+      hub.sendTo(body.userId, { type: 'friend', friend: friendEntry(meRow, 'friends') })
     } else {
-      hub.sendTo(body.userId, { type: 'friend', friend: friendEntry(meRow, false) })
+      hub.sendTo(body.userId, { type: 'friend', friend: friendEntry(meRow, 'incoming') })
     }
-    hub.sendTo(me, { type: 'friend', friend: friendEntry(db.getUser(body.userId)!, status === 'friends') })
+    hub.sendTo(me, { type: 'friend', friend: friendEntry(db.getUser(body.userId)!, status) })
     return { status, updatedAt }
   })
 
@@ -216,8 +290,8 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     if (st !== 'incoming') return reply.code(400).send({ error: 'no pending request' })
     db.acceptFriend(me, body.userId)
     const meRow = db.getUser(me)!
-    hub.sendTo(body.userId, { type: 'friend', friend: friendEntry(meRow) })
-    hub.sendTo(me, { type: 'friend', friend: friendEntry(db.getUser(body.userId)!) })
+    hub.sendTo(body.userId, { type: 'friend', friend: friendEntry(meRow, 'friends') })
+    hub.sendTo(me, { type: 'friend', friend: friendEntry(db.getUser(body.userId)!, 'friends') })
     return { status: 'friends' as FriendStatus }
   })
 
@@ -271,10 +345,26 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
       seq: existing,
     }
     db.touchUser(me)
-    const serverMsg = toServerMessage(msg)
+    const serverMsg = toServerMessage(msg, db)
     hub.sendTo(me, { type: 'message-acked', id: msg.id, seq: existing })
     hub.sendTo(peer, { type: 'message', message: serverMsg })
     return { seq: existing }
+  })
+
+  app.delete<{ Params: { id: string } }>('/api/v1/messages/:id', async (req, reply) => {
+    const me = (req as AuthedReq).userId!
+    const row = db.messageById(req.params.id)
+    if (!row) return reply.code(404).send({ error: 'not found' })
+    if (row.senderId !== me) return reply.code(403).send({ error: 'only sender can revoke' })
+    if (row.revoked) return { ok: true, seq: row.seq }
+    const peer = peerOfConversation(row.conversationId, me)
+    if (!peer) return reply.code(400).send({ error: 'invalid conversation' })
+    const seq = db.maxSeq() + 1
+    db.revokeMessage(row.id, seq)
+    const payload = { type: 'message-deleted' as const, id: row.id, conversationId: row.conversationId }
+    hub.sendTo(me, payload)
+    hub.sendTo(peer, payload)
+    return { ok: true, seq }
   })
 
   app.get<{ Querystring: { conversationId?: string; before?: string; limit?: string } }>(
@@ -285,10 +375,11 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
       if (!conversationId) return reply.code(400).send({ error: 'conversationId required' })
       const peer = peerOfConversation(conversationId, me)
       if (!peer) return reply.code(400).send({ error: 'invalid conversation' })
-      const before = Number(req.query.before ?? Date.now())
+      const rawBefore = Number(req.query.before)
+      const before = Number.isFinite(rawBefore) && rawBefore > 0 ? rawBefore : Number.MAX_SAFE_INTEGER
       const limit = Math.min(Number(req.query.limit ?? 50), 100)
       const rows = db.messagesInConversation(conversationId, before, limit)
-      return { messages: rows.map((r) => toServerMessage(r as unknown as Message)) }
+      return { messages: rows.map((r) => toServerMessage(rowToMessage(r), db)) }
     },
   )
 
@@ -303,9 +394,13 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
       const [a, b] = r.conversationId.split('__')
       return a === me || b === me
     })
-    const messages = mine.map((r) => toServerMessage(r as unknown as Message))
-    const friends = listFriendEntries(db, me).filter((f) => f.confirmed)
+    const messages = mine.map((r) => toServerMessage(rowToMessage(r), db))
+    const friends = listFriendEntries(db, me)
     const profiles: ServerProfile[] = []
+    const meRow = db.getUser(me)
+    if (meRow && (profilesSince === 0 || meRow.updatedAt > profilesSince)) {
+      profiles.push(toProfile(repairUserAvatar(db, avatarDir, meRow)))
+    }
     for (const f of friends) {
       const u = db.getUser(f.userId)
       if (u && u.updatedAt > profilesSince) profiles.push(toProfile(u))
@@ -363,6 +458,22 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     }
   })
 
+  app.get<{ Params: { sha: string } }>('/api/v1/files/by-sha/:sha', async (req, reply) => {
+    const sha = req.params.sha.trim().toLowerCase()
+    if (!/^[a-f0-9]{64}$/.test(sha)) return reply.code(400).send({ error: 'bad sha' })
+    const file = db.fileBySha(sha)
+    if (!file) return reply.code(404).send({ error: 'not found' })
+    return {
+      id: file.id,
+      url: `${FILE_PREFIX.message}/${file.id}`,
+      sha256: file.sha256,
+      name: file.name,
+      mime: file.mime,
+      size: file.size,
+      kind: file.kind,
+    }
+  })
+
   registerFileRoutes(app, { db, messageDir, avatarDir })
 }
 
@@ -403,7 +514,7 @@ function peerOfConversation(conversationId: string, me: string): string | undefi
   return undefined
 }
 
-function friendEntry(u: UserRow, confirmed = true): ServerFriend {
+function friendEntry(u: UserRow, status: FriendStatus = 'friends'): ServerFriend {
   return {
     userId: u.userId,
     username: u.username ?? undefined,
@@ -411,7 +522,8 @@ function friendEntry(u: UserRow, confirmed = true): ServerFriend {
     avatarUrl: u.avatarUrl ?? undefined,
     avatarHash: u.avatarHash ?? undefined,
     statusText: u.statusText ?? undefined,
-    confirmed,
+    confirmed: status === 'friends',
+    status,
     updatedAt: u.updatedAt,
   }
 }
@@ -423,7 +535,9 @@ function listFriendEntries(db: Db, me: string): ServerFriend[] {
     const otherId = r.a === me ? r.b : r.a
     const other = db.getUser(otherId)
     if (!other) continue
-    out.push(friendEntry(other, r.status === 'confirmed'))
+    const st = db.friendStatus(me, otherId)
+    if (st === 'none') continue
+    out.push(friendEntry(other, st))
   }
   return out
 }

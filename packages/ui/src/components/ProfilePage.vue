@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { Profile } from '@chataoo/shared'
+import { APP_VERSION_LABEL, type Profile } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
 import Avatar from './Avatar.vue'
 import AvatarCropper from './AvatarCropper.vue'
+import Icon from './Icon.vue'
 
 /**
  * 个人主页：默认展示自己（可点头像换头像、改昵称、退出登录）；
  * 传入 peerId 时展示对方资料（只读）。
  */
-const props = defineProps<{ peerId?: string }>()
+const props = defineProps<{ peerId?: string; showBack?: boolean }>()
 const emit = defineEmits<{ close: []; openChat: [peerId: string] }>()
 const store = useChatStore()
 
@@ -29,7 +30,6 @@ const profile = computed<Profile | null>(() => {
   return store.profileOf(props.peerId!) ?? null
 })
 
-/* 头像：点击即触发更换（仅自己） */
 const cropping = ref(false)
 const cropSrc = ref('')
 const avatarInput = ref<HTMLInputElement | null>(null)
@@ -56,7 +56,6 @@ async function onCropped(blob: Blob): Promise<void> {
   }
 }
 
-/* 昵称编辑（仅自己） */
 const editingName = ref(false)
 const nameDraft = ref('')
 const nameSaving = ref(false)
@@ -79,7 +78,6 @@ async function saveName(): Promise<void> {
   }
 }
 
-/* 复制用户 ID */
 const copied = ref(false)
 async function copyId(): Promise<void> {
   const s = store.session
@@ -94,7 +92,6 @@ async function copyId(): Promise<void> {
   }
 }
 
-/* 退出登录（仅自己） */
 const confirmingLogout = ref(false)
 async function logout(): Promise<void> {
   await store.session?.logout()
@@ -107,18 +104,26 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
 
 <template>
   <div class="page">
-    <header class="head">
-      <button class="icon-btn" @click="emit('close')">←</button>
-      <span class="title">{{ isSelf ? '我的主页' : '个人主页' }}</span>
-      <span class="spacer" />
+    <header v-if="showBack !== false || !isSelf" class="head">
+      <button class="icon-btn" @click="emit('close')">
+        <Icon name="back" :size="20" />
+      </button>
+      <span class="title">{{ isSelf ? '我' : '资料' }}</span>
     </header>
 
     <div class="body">
-      <!-- 头像：点击更换（自己） -->
       <div class="avatar-wrap" :class="{ editable: isSelf }" @click="isSelf && avatarInput?.click()">
-        <Avatar :profile="profile" :size="96" :online="isSelf ? undefined : peerOnline" />
-        <span v-if="isSelf" class="edit-tip">点击更换头像</span>
-        <input ref="avatarInput" type="file" accept="image/*" hidden @change="pickAvatar" />
+        <Avatar :profile="profile" :size="88" :online="isSelf ? undefined : peerOnline" />
+        <span v-if="isSelf" class="edit-tip">更换头像</span>
+        <input
+          v-if="isSelf"
+          ref="avatarInput"
+          class="avatar-file"
+          type="file"
+          accept="image/*"
+          @click.stop
+          @change="pickAvatar"
+        />
       </div>
       <p v-if="avatarError" class="avatar-error">{{ avatarError }}</p>
 
@@ -130,36 +135,42 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
         </template>
         <template v-else>
           <h2 class="name">{{ profile?.displayName ?? '未知用户' }}</h2>
-          <button v-if="isSelf" class="icon-btn" title="修改昵称" @click="startEditName">✎</button>
+          <button v-if="isSelf" class="icon-btn" title="修改昵称" @click="startEditName">
+            <Icon name="edit" :size="16" />
+          </button>
         </template>
       </div>
 
-      <div class="sub">
-        <span v-if="isSelf" class="pill">@{{ username }}</span>
-        <span v-if="peerOnline" class="pill ok">在线</span>
-      </div>
+      <p v-if="username" class="uname">@{{ username }}</p>
+      <p v-else-if="peerOnline" class="uname on">在线</p>
 
-      <div class="meta">
+      <dl class="meta">
         <div class="meta-row">
-          <span class="label">用户 ID</span>
-          <code>{{ isSelf ? store.session?.me.userId : peerId }}</code>
-          <button class="btn btn-ghost sm" @click="copyId">{{ copied ? '已复制 ✓' : '复制' }}</button>
+          <dt>用户 ID</dt>
+          <dd>
+            <code>{{ isSelf ? store.session?.me.userId : peerId }}</code>
+            <button class="icon-btn" :title="copied ? '已复制' : '复制'" @click="copyId">
+              <Icon :name="copied ? 'check' : 'copy'" :size="15" />
+            </button>
+          </dd>
         </div>
         <div v-if="isSelf" class="meta-row">
-          <span class="label">服务器</span>
-          <span class="value">{{ store.online ? '在线' : '离线（局域网模式）' }}</span>
+          <dt>连接</dt>
+          <dd>{{ store.online ? '服务器在线' : '离线 · 局域网' }}</dd>
         </div>
-      </div>
+        <div v-if="isSelf" class="meta-row">
+          <dt>版本</dt>
+          <dd>{{ APP_VERSION_LABEL }}</dd>
+        </div>
+      </dl>
 
       <div v-if="!isSelf" class="actions">
         <button class="btn btn-primary" @click="emit('openChat', props.peerId!)">发消息</button>
       </div>
 
-      <div v-if="isSelf" class="divider" />
-
       <div v-if="isSelf" class="logout-area">
         <template v-if="confirmingLogout">
-          <p class="logout-hint">退出后需在线重新登录；本机消息会保留。</p>
+          <p class="logout-hint">退出后需联网重新登录，本机消息会留下。</p>
           <button class="btn btn-danger" @click="logout">确认退出</button>
           <button class="btn btn-ghost" @click="confirmingLogout = false">取消</button>
         </template>
@@ -167,7 +178,7 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
       </div>
     </div>
 
-    <AvatarCropper v-if="cropping" :src="cropSrc" title="调整头像位置与范围" @close="cropping = false" @cropped="onCropped" />
+    <AvatarCropper v-if="cropping" :src="cropSrc" title="调整头像" @close="cropping = false" @cropped="onCropped" />
   </div>
 </template>
 
@@ -177,136 +188,130 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  background: var(--bg-sidebar);
 }
 .head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-soft);
+  gap: 4px;
+  padding: 8px 10px;
   flex: none;
 }
 .title {
   font-size: 15px;
-  font-weight: 700;
-}
-.spacer {
-  flex: 1;
+  font-weight: 600;
 }
 .body {
-  padding: 24px 20px;
+  padding: 20px 22px 28px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
+  align-items: flex-start;
 }
 .avatar-wrap {
   position: relative;
-  cursor: default;
+  margin-bottom: 8px;
 }
 .avatar-wrap.editable {
   cursor: pointer;
 }
-.avatar-wrap.editable:hover::after {
-  content: '';
+.avatar-file {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.35);
+  opacity: 0.01;
+  width: 100%;
+  height: 100%;
+  font-size: 0;
+  cursor: pointer;
 }
 .edit-tip {
-  position: absolute;
-  bottom: -22px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
+  display: block;
+  margin-top: 8px;
+  font-size: 11.5px;
   color: var(--text-faint);
-  white-space: nowrap;
 }
 .avatar-error {
   color: var(--danger);
   font-size: 12.5px;
-  margin: 22px 0 0;
-  text-align: center;
+  margin: 8px 0 0;
 }
 .name-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 18px;
+  gap: 4px;
+  margin-top: 10px;
 }
 .name {
   margin: 0;
   font-size: 20px;
-  font-weight: 800;
+  font-weight: 600;
 }
 .name-input {
-  background: var(--bg-input);
+  background: var(--bg-raised);
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
-  padding: 7px 10px;
+  padding: 6px 10px;
   font-size: 16px;
-  font-weight: 700;
   outline: none;
   width: 180px;
 }
-.sub {
-  display: flex;
-  gap: 8px;
+.uname {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
 }
-.pill.ok {
-  background: rgba(53, 193, 142, 0.12);
+.uname.on {
   color: var(--ok);
 }
 .meta {
   width: 100%;
-  max-width: 420px;
-  margin-top: 18px;
+  margin: 22px 0 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
 }
 .meta-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-soft);
+  font-size: 13px;
 }
-.label {
-  font-size: 12px;
-  color: var(--text-dim);
-  font-weight: 600;
+.meta-row dt {
+  width: 64px;
   flex: none;
+  color: var(--text-faint);
+}
+.meta-row dd {
+  margin: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 .meta-row code {
   flex: 1;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-dim);
   word-break: break-all;
-}
-.value {
-  font-size: 13px;
 }
 .btn.sm {
   padding: 5px 12px;
   font-size: 12px;
-  flex: none;
 }
 .actions {
-  margin-top: 18px;
+  margin-top: 20px;
 }
 .logout-area {
-  margin-top: 8px;
+  margin-top: 28px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .logout-hint {
   margin: 0;
+  width: 100%;
   color: var(--text-faint);
   font-size: 12.5px;
 }

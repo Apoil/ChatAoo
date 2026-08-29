@@ -49,19 +49,17 @@ watch(
   <div class="scroller" ref="scroller" @scroll="onScroll">
     <div class="inner">
       <button v-if="(store.messages[conversationId]?.length ?? 0) > 0" class="older" @click="loadOlder">
-        加载更早的消息
+        更早的消息
       </button>
       <MessageBubble
         v-for="(m, i) in store.messages[conversationId] ?? []"
-        :key="m.id"
+        :key="`${m.id}-${i}`"
         :message="m"
         :profile="store.profileOf(m.senderId)"
         :show-avatar="!m.senderId.startsWith('c_') || (store.messages[conversationId] ?? [])[i - 1]?.senderId !== m.senderId"
         @open="(a) => emit('open', a)"
       />
-      <div v-if="!(store.messages[conversationId] ?? []).length" class="hint">
-        暂无消息，发送第一条消息开始聊天吧
-      </div>
+      <div v-if="!(store.messages[conversationId] ?? []).length" class="hint">还没有消息</div>
     </div>
   </div>
 </template>
@@ -70,30 +68,36 @@ watch(
 .scroller {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 16px;
+  padding: 12px 16px 8px;
+  background-color: var(--bg-chat);
+  background-image: repeating-linear-gradient(
+    -18deg,
+    transparent,
+    transparent 10px,
+    rgba(28, 25, 21, 0.028) 10px,
+    rgba(28, 25, 21, 0.028) 11px
+  );
 }
 .inner {
   display: flex;
   flex-direction: column;
-  max-width: 860px;
+  max-width: 760px;
   margin: 0 auto;
 }
 .older {
   align-self: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   color: var(--text-dim);
   font-size: 12px;
-  padding: 6px 14px;
-  border-radius: var(--radius-full);
-  background: var(--bg-raised);
+  padding: 4px 10px;
 }
 .older:hover {
-  background: var(--bg-hover);
+  color: var(--text);
 }
 .hint {
   text-align: center;
   color: var(--text-faint);
-  margin-top: 40px;
+  margin-top: 48px;
   font-size: 13px;
 }
 </style>

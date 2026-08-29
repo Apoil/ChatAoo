@@ -1,6 +1,6 @@
 /**
  * ChatAoo 图标生成器 —— 零依赖纯 Node：
- * 程序化绘制 Logo（渐变圆角底 + 聊天气泡 + 三点 + 点对点弧线），
+ * 程序化绘制 Logo（柿色圆角底 + 叠放对话气泡），
  * 输出 PNG / ICO（PNG 内嵌）/ Android 自适应图标。
  * 用法：node scripts/generate-icons.mjs
  */
@@ -131,6 +131,34 @@ function fillCircle(canvas, cx, cy, r, color, opacity = 1) {
   }
 }
 
+function pointInPoly(x, y, pts) {
+  let inside = false
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0]
+    const yi = pts[i][1]
+    const xj = pts[j][0]
+    const yj = pts[j][1]
+    const hit = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0001) + xi
+    if (hit) inside = !inside
+  }
+  return inside
+}
+
+function fillPoly(canvas, pts, color, opacity = 1) {
+  const [cr, cg, cb] = hex(color)
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  const minX = Math.floor(Math.min(...xs))
+  const maxX = Math.ceil(Math.max(...xs))
+  const minY = Math.floor(Math.min(...ys))
+  const maxY = Math.ceil(Math.max(...ys))
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (pointInPoly(x + 0.5, y + 0.5, pts)) blend(canvas, x, y, cr, cg, cb, 255 * opacity)
+    }
+  }
+}
+
 /** 圆弧描边（点对点弧线） */
 function arcStroke(canvas, cx, cy, radius, a0, a1, width, color, opacity = 1) {
   const [ar, ag, ab] = hex(color)
@@ -151,37 +179,26 @@ function arcStroke(canvas, cx, cy, radius, a0, a1, width, color, opacity = 1) {
 
 /* ---------------- Logo 绘制（512 坐标系） ---------------- */
 
-const BG = ['#4f46e5', '#7c3aed', '#0ea5e9']
-const BUBBLE = ['#ffffff', '#e8edf7']
-const DOTS = ['#4f46e5', '#7c3aed', '#0ea5e9']
-const ARC = '#a5f3fc'
+const BG = '#c45c26'
+const PAPER = '#faf7f2'
+const BUBBLE = '#f0c9ae'
 
 function drawLogo(canvas, scale = 1, ox = 0, oy = 0) {
   const s = (v) => v * scale
   const X = (v) => s(v) + ox
   const Y = (v) => s(v) + oy
-  // 圆角渐变底
-  roundedRect(canvas, X(16), Y(16), X(496), Y(496), s(112), { fill: BG })
-  // 聊天气泡
-  const bx0 = X(96), by0 = Y(80), bx1 = X(416), by1 = Y(328)
-  roundedRect(canvas, bx0, by0, bx1, by1, s(48), { fill: BUBBLE })
-  // 尾巴
-  fillCircle(canvas, X(152), Y(408), s(18), '#eef2fb')
-  for (let i = 0; i < 6; i++) {
-    const t = i / 5
-    const px = X(152) + (X(252) - X(152)) * t
-    const py = Y(408) + (Y(328) - Y(408)) * t
-    fillCircle(canvas, px, py, s(10) * (1 - t * 0.6), '#e8edf7')
-  }
-  // 三点
-  fillCircle(canvas, X(176), Y(204), s(20), DOTS[0])
-  fillCircle(canvas, X(256), Y(204), s(20), DOTS[1])
-  fillCircle(canvas, X(336), Y(204), s(20), DOTS[2])
-  // 点对点弧线
-  arcStroke(canvas, X(388), Y(96), s(132), -0.45, 0.95, s(14), ARC, 0.9)
-  fillCircle(canvas, X(452), Y(220), s(16), ARC)
-  arcStroke(canvas, X(124), Y(400), s(140), Math.PI * 0.9, Math.PI * 1.75, s(14), ARC, 0.6)
-  fillCircle(canvas, X(60), Y(272), s(16), ARC, 0.6)
+  roundedRect(canvas, X(16), Y(16), X(496), Y(496), s(108), { fill: BG })
+  roundedRect(canvas, X(188), Y(100), X(416), Y(268), s(36), { fill: BUBBLE })
+  roundedRect(canvas, X(96), Y(196), X(344), Y(380), s(36), { fill: PAPER })
+  fillPoly(
+    canvas,
+    [
+      [X(96), Y(332)],
+      [X(168), Y(380)],
+      [X(78), Y(432)],
+    ],
+    PAPER,
+  )
 }
 
 /* ---------------- 输出 ---------------- */

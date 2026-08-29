@@ -53,20 +53,38 @@ onMounted(() => {
   }
 })
 
-function confirm(): void {
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob)
+        return
+      }
+      try {
+        const data = canvas.toDataURL('image/png')
+        void fetch(data)
+          .then((r) => r.blob())
+          .then(resolve)
+          .catch(reject)
+      } catch (e) {
+        reject(e)
+      }
+    }, 'image/png')
+  })
+}
+
+async function confirm(): Promise<void> {
   if (!cropper || busy.value || !ready.value) return
   busy.value = true
   error.value = ''
   try {
     const canvas = cropper.getCroppedCanvas({ width: 512, height: 512 })
-    canvas.toBlob((blob) => {
-      busy.value = false
-      if (blob) emit('cropped', blob)
-      else error.value = '生成图片失败，请重试'
-    }, 'image/png')
+    const blob = await canvasToBlob(canvas)
+    emit('cropped', blob)
   } catch (e) {
-    busy.value = false
     error.value = `裁剪失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    busy.value = false
   }
 }
 
@@ -97,7 +115,8 @@ onBeforeUnmount(() => {
 <style scoped>
 h3 {
   margin: 0 0 12px;
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 600;
 }
 .img-box {
   max-height: 420px;

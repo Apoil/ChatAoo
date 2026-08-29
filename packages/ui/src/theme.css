@@ -1,47 +1,45 @@
-/* ChatAoo 主题 —— 中性深灰 + 单一 Telegram 蓝，克制、干净 */
+/* ChatAoo —— 信纸浅底 + 柿色，偏桌面即时通讯，不走 SaaS 深色模板 */
 :root {
-  /* 背景层级（暖中性灰，非偏紫蓝） */
-  --bg: #111417;
-  --bg-sidebar: #171b20;
-  --bg-raised: #1e232a;
-  --bg-hover: #252b34;
-  --bg-active: #2b323d;
-  --bg-input: #0c0f12;
-  --bg-float: rgba(17, 20, 23, 0.94);
+  --bg: #f3eee6;
+  --bg-sidebar: #faf7f2;
+  --bg-raised: #ffffff;
+  --bg-hover: #efe8dc;
+  --bg-active: #eadfcf;
+  --bg-input: #ece6db;
+  --bg-chat: #e8e0d4;
+  --bg-float: rgba(250, 247, 242, 0.94);
 
-  /* 边框 */
-  --border: #2a313b;
-  --border-soft: #20262e;
+  --border: #ddd4c6;
+  --border-soft: #ebe4d8;
 
-  /* 文本 */
-  --text: #e6e9ee;
-  --text-dim: #9aa4b1;
-  --text-faint: #5f6a78;
+  --text: #1c1915;
+  --text-dim: #6a645a;
+  --text-faint: #9a9388;
 
-  /* 品牌（单一蓝色） */
-  --accent: #3390ec;
-  --accent-text: #ffffff;
-  --accent-soft: rgba(51, 144, 236, 0.14);
-  --accent-border: rgba(51, 144, 236, 0.4);
+  --accent: #c45c26;
+  --accent-hover: #b04f1d;
+  --accent-text: #fffaf6;
+  --accent-soft: rgba(196, 92, 38, 0.12);
+  --accent-border: rgba(196, 92, 38, 0.35);
 
-  /* 消息气泡 */
-  --msg-in: #1e232a;
-  --msg-out: #2b5278;
+  --msg-in: #ffffff;
+  --msg-out: #f0c9ae;
 
-  /* 状态色 */
-  --ok: #35c18e;
-  --warn: #e8b23a;
-  --danger: #e5655f;
+  --ok: #3d7a5a;
+  --lan: #2d6b74;
+  --warn: #b07a22;
+  --danger: #b5453a;
 
-  /* 圆角与阴影 */
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 16px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
   --radius-full: 999px;
-  --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --shadow: 0 1px 2px rgba(28, 25, 21, 0.06);
+  --shadow-float: 0 8px 28px rgba(28, 25, 21, 0.14);
 
-  --font: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --chrome-h: 44px;
 }
 
 * {
@@ -56,26 +54,35 @@ body,
   padding: 0;
 }
 
+html {
+  color-scheme: light;
+}
+
 body {
   font-family: var(--font);
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
 }
 
+::selection {
+  background: rgba(196, 92, 38, 0.22);
+}
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2c333d;
-  border-radius: 4px;
+  background: #d4cbbd;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a424e;
+  background: #c4baaa;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -90,34 +97,34 @@ button {
 }
 
 input,
-textarea {
+textarea,
+code {
   font-family: inherit;
   color: var(--text);
+  user-select: text;
 }
-
-/* ---------------- 通用组件 ---------------- */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 8px 16px;
-  border-radius: var(--radius-full);
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 600;
-  transition: background 0.15s, opacity 0.15s, transform 0.05s;
+  transition: background 0.12s, opacity 0.12s;
   border: 1px solid transparent;
 }
 .btn:active {
-  transform: scale(0.97);
+  opacity: 0.86;
 }
 .btn-primary {
   background: var(--accent);
   color: var(--accent-text);
 }
 .btn-primary:hover {
-  background: #2f82d8;
+  background: var(--accent-hover);
 }
 .btn-ghost {
   background: var(--bg-raised);
@@ -128,14 +135,15 @@ textarea {
   background: var(--bg-hover);
 }
 .btn-danger {
-  background: rgba(229, 101, 95, 0.14);
+  background: transparent;
   color: var(--danger);
+  border-color: rgba(181, 69, 58, 0.28);
 }
 .btn-danger:hover {
-  background: rgba(229, 101, 95, 0.24);
+  background: rgba(181, 69, 58, 0.08);
 }
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
@@ -143,11 +151,11 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-full);
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.12s, color 0.12s;
 }
 .icon-btn:hover {
   background: var(--bg-hover);
@@ -157,63 +165,70 @@ textarea {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   width: 100%;
 }
 .field label {
   font-size: 12px;
   color: var(--text-dim);
-  font-weight: 600;
 }
 .field input,
 .field textarea,
 .field select {
-  background: var(--bg-input);
+  background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: 9px 11px;
   font-size: 14px;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 .field input:focus,
 .field textarea:focus,
 .field select:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--accent-soft);
-  color: var(--accent);
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-input);
+  color: var(--text-dim);
 }
 
 .divider {
   height: 1px;
   background: var(--border-soft);
-  margin: 8px 16px;
+  margin: 8px 0;
+  width: 100%;
 }
 
-/* 头像裁剪弹窗（类名避开 cropperjs 内部的 .cropper-modal，防止样式污染） */
+.empty-hint {
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1.65;
+  padding: 28px 18px;
+}
+
 .avatar-crop-modal {
   position: fixed;
   inset: 0;
-  background: #0a0c11;
+  background: rgba(28, 25, 21, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
 }
 .avatar-crop-card {
-  background: var(--bg-raised);
+  background: var(--bg-sidebar);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 20px;
+  padding: 18px;
   box-shadow: var(--shadow-float);
   max-width: min(92vw, 640px);
   width: 100%;

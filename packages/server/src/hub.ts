@@ -20,7 +20,19 @@ export class Hub {
     const set = this.sockets.get(userId)
     if (!set) return
     set.delete(socket)
-    if (set.size === 0) this.sockets.delete(userId)
+    if (set.size === 0) {
+      this.sockets.delete(userId)
+      this.broadcastPresence(userId)
+    }
+  }
+
+  /** 把当前已在线的人发给刚连上的用户（否则只能看到之后才上线的人） */
+  sendPresenceSnapshot(userId: string): void {
+    for (const other of this.sockets.keys()) {
+      if (other !== userId && this.isOnline(other)) {
+        this.sendTo(userId, { type: 'presence', userId: other, online: true })
+      }
+    }
   }
 
   isOnline(userId: string): boolean {

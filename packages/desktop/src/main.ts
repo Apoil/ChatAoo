@@ -15,7 +15,7 @@ async function bootstrap(): Promise<void> {
     media: new DesktopMedia(bridge),
     lan: new DesktopLan(bridge),
     openExternal: (url: string) => void bridge.app.openExternal(url),
-    saveFile: (name: string, url: string) => void bridge.app.saveFile(name, url),
+    saveFile: (name: string, url: string) => bridge.app.saveFile(name, url),
   }
 
   const session = await ChatSession.create(platform)
@@ -31,5 +31,5 @@ async function bootstrap(): Promise<void> {
 
 void bootstrap().catch((e) => {
   console.error('bootstrap failed:', e)
-  document.body.innerHTML = `<pre style="color:#f87171;padding:40px">启动失败：${String(e)}</pre>`
+  document.body.innerHTML = `<pre style="color:#b5453a;padding:40px">启动失败：${String(e)}</pre>`
 })

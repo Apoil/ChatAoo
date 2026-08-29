@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { APP_VERSION_LABEL } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
 import logoUrl from '../logo.svg'
 
-const props = defineProps<{ allowServerEdit?: boolean }>()
+defineProps<{ allowServerEdit?: boolean }>()
 const emit = defineEmits<{ done: [] }>()
 const store = useChatStore()
 
@@ -12,6 +13,7 @@ const username = ref('')
 const password = ref('')
 const displayName = ref('')
 const serverUrl = ref(store.session?.serverUrl ?? 'http://127.0.0.1:47800')
+const showServer = ref(false)
 const busy = ref(false)
 const error = ref('')
 
@@ -58,71 +60,59 @@ async function submit(): Promise<void> {
 
 <template>
   <div class="login">
-    <!-- 顶部标题栏：与系统窗口控件同行，可拖拽窗口 -->
     <div class="titlebar">
       <img :src="logoUrl" class="tb-logo" alt="" />
       <span class="tb-name">ChatAoo</span>
+      <span class="tb-ver">{{ APP_VERSION_LABEL }}</span>
     </div>
 
     <div class="body">
-      <div class="hero">
-        <img :src="logoUrl" class="logo" alt="ChatAoo" />
-        <h1>{{ mode === 'login' ? '欢迎回来' : '创建账号' }}</h1>
-        <p class="tagline">局域网点对点 · 离线优先聊天</p>
+      <header class="intro">
+        <img :src="logoUrl" class="logo" alt="" />
+        <h1>{{ mode === 'login' ? '登录' : '注册' }}</h1>
+        <p class="tagline">同一网络里的好友，断网也能聊</p>
+      </header>
+
+      <div class="mode">
+        <button type="button" :class="{ active: mode === 'login' }" @click="mode = 'login'">登录</button>
+        <button type="button" :class="{ active: mode === 'register' }" @click="mode = 'register'">注册</button>
       </div>
 
-      <div class="panel">
-        <div class="tabs">
-          <button :class="{ active: mode === 'login' }" @click="mode = 'login'">登录</button>
-          <button :class="{ active: mode === 'register' }" @click="mode = 'register'">注册</button>
-        </div>
+      <form class="form" @submit.prevent="submit">
+        <label class="field">
+          <span>用户名</span>
+          <input
+            v-model="username"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            @input="onUsernameInput"
+          />
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input v-model="password" type="password" autocomplete="current-password" />
+        </label>
+        <label v-if="mode === 'register'" class="field">
+          <span>昵称</span>
+          <input v-model="displayName" maxlength="30" placeholder="好友看到的名字" />
+        </label>
 
-        <div class="form">
-          <div class="field">
-            <input
-              v-model="username"
-              placeholder="用户名"
-              autocomplete="username"
-              autocapitalize="none"
-              spellcheck="false"
-              @input="onUsernameInput"
-              @keydown.enter="submit"
-            />
-            <span class="field-hint">3-20 位字母 / 数字 / 下划线，自动小写</span>
-          </div>
-          <div class="field">
-            <input
-              v-model="password"
-              type="password"
-              placeholder="密码"
-              autocomplete="current-password"
-              @keydown.enter="submit"
-            />
-            <span v-if="mode === 'register'" class="field-hint">至少 6 位</span>
-          </div>
-          <div v-if="mode === 'register'" class="field">
-            <input
-              v-model="displayName"
-              placeholder="昵称（展示给好友）"
-              maxlength="30"
-              @keydown.enter="submit"
-            />
-          </div>
-          <div v-if="allowServerEdit" class="field">
-            <input v-model="serverUrl" placeholder="服务器地址" spellcheck="false" @keydown.enter="submit" />
-          </div>
+        <p v-if="error" class="error">{{ error }}</p>
 
-          <p v-if="error" class="error">{{ error }}</p>
+        <button class="btn btn-primary submit" :disabled="busy" type="submit">
+          {{ busy ? '请稍候…' : mode === 'login' ? '登录' : '创建账号' }}
+        </button>
+      </form>
 
-          <button class="btn-primary" :disabled="busy" @click="submit">
-            {{ busy ? '处理中…' : mode === 'login' ? '登 录' : '注册并登录' }}
-          </button>
-        </div>
+      <div v-if="allowServerEdit" class="server">
+        <button type="button" class="server-toggle" @click="showServer = !showServer">
+          {{ showServer ? '收起服务器地址' : '服务器地址' }}
+        </button>
+        <input v-if="showServer" v-model="serverUrl" class="server-input" spellcheck="false" />
       </div>
 
-      <p class="hint">
-        登录后自动记住登录状态：之后即使完全断网，也能以已登录身份进入，与局域网内的好友点对点聊天。
-      </p>
+      <p class="ver">{{ APP_VERSION_LABEL }}</p>
     </div>
   </div>
 </template>
@@ -134,144 +124,132 @@ async function submit(): Promise<void> {
   flex-direction: column;
   background: var(--bg);
 }
-/* 标题栏：44px，与系统窗口按钮同行；品牌融入，可拖拽 */
 .titlebar {
-  height: 44px;
+  height: var(--chrome-h);
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 14px;
   -webkit-app-region: drag;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--bg);
+  background: var(--bg-sidebar);
 }
 .tb-logo {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 5px;
 }
 .tb-name {
   font-size: 13px;
-  font-weight: 600;
   color: var(--text-dim);
-  letter-spacing: 0.3px;
+}
+.tb-ver {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
 }
 .body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 12px 24px 16px;
+  padding: 8px 28px 24px;
   overflow-y: auto;
+  max-width: 420px;
+  width: 100%;
+  margin: 0 auto;
 }
-.hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin: 8px 0 16px;
+.intro {
+  margin-bottom: 22px;
 }
 .logo {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: block;
 }
 h1 {
-  margin: 12px 0 2px;
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  margin: 14px 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 .tagline {
   margin: 0;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-/* 面板：与窗口同宽，紧凑对话框式 */
-.panel {
-  width: 100%;
-  max-width: 392px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 16px;
-}
-.tabs {
-  display: flex;
-  gap: 4px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 3px;
-  margin-bottom: 14px;
-}
-.tabs button {
-  flex: 1;
-  padding: 7px 0;
-  border-radius: 8px;
   color: var(--text-dim);
   font-size: 13px;
-  font-weight: 600;
-  transition: background 0.15s, color 0.15s;
 }
-.tabs button.active {
-  background: var(--bg-active);
+.mode {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.mode button {
+  padding: 0 0 8px;
+  color: var(--text-faint);
+  font-size: 14px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.mode button.active {
   color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
 }
 .form {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+.field span {
+  font-size: 12px;
+  color: var(--text-dim);
+}
 .field input {
-  width: 100%;
-  height: 42px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0 14px;
-  font-size: 14px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-.field input:focus {
-  border-color: var(--accent);
-}
-.field-hint {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-faint);
-  padding-left: 2px;
+  height: 40px;
+  background: var(--bg-raised);
 }
 .error {
   color: var(--danger);
   font-size: 12.5px;
   margin: 0;
 }
-.btn-primary {
+.submit {
   width: 100%;
-  height: 42px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
+  height: 40px;
+  margin-top: 4px;
   font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 2px;
-  transition: background 0.15s, opacity 0.15s;
 }
-.btn-primary:hover {
-  background: #2f82d8;
+.server {
+  margin-top: 18px;
 }
-.btn-primary:disabled {
-  opacity: 0.5;
-}
-.hint {
-  margin: 14px 0 0;
-  max-width: 392px;
+.server-toggle {
+  font-size: 12px;
   color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.6;
-  text-align: center;
+  padding: 0;
+}
+.server-toggle:hover {
+  color: var(--text-dim);
+}
+.server-input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  height: 36px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+.server-input:focus {
+  border-color: var(--accent);
+}
+.ver {
+  margin-top: auto;
+  padding-top: 28px;
+  font-size: 12px;
+  color: var(--text-faint);
 }
 </style>

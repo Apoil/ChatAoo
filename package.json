@@ -1,6 +1,6 @@
 {
   "name": "chataoo",
-  "version": "0.1.0",
+  "version": "1.0.3",
   "private": true,
   "description": "ChatAoo — 局域网点对点 + 离线优先的多端聊天应用 (Vue 3 / Electron / Capacitor)",
   "packageManager": "pnpm@10.33.0",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { Profile } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
 
@@ -13,6 +13,15 @@ const store = useChatStore()
 const url = ref<string | null>(null)
 const initial = ref('?')
 
+const TONES = ['#8f5b3d', '#5f6b4e', '#6a4e5c', '#4e5d6b', '#7a5e38', '#3f5c56']
+
+const tone = computed(() => {
+  const key = props.profile?.displayName || props.profile?.userId || '?'
+  let h = 0
+  for (let i = 0; i < key.length; i++) h = (h + key.charCodeAt(i) * (i + 1)) % 997
+  return TONES[h % TONES.length]
+})
+
 async function resolve(): Promise<void> {
   const p = props.profile
   if (!p) {
@@ -25,16 +34,25 @@ async function resolve(): Promise<void> {
 }
 
 onMounted(resolve)
-watch(() => [props.profile?.avatarHash, props.profile?.updatedAt], resolve)
+watch(() => [props.profile?.avatarHash, props.profile?.avatarUrl, props.profile?.updatedAt, store.mediaTick], resolve)
+
+function onImgError(): void {
+  url.value = null
+}
 </script>
 
 <template>
   <div
     class="avatar"
-    :style="{ width: `${size ?? 40}px`, height: `${size ?? 40}px`, fontSize: `${(size ?? 40) * 0.42}px` }"
+    :style="{
+      width: `${size ?? 40}px`,
+      height: `${size ?? 40}px`,
+      fontSize: `${(size ?? 40) * 0.4}px`,
+      background: url ? undefined : tone,
+    }"
     :class="{ online: online }"
   >
-    <img v-if="url" :src="url" alt="" draggable="false" />
+    <img v-if="url" :src="url" alt="" draggable="false" @error="onImgError" />
     <span v-else class="initial">{{ initial }}</span>
     <i v-if="online" class="dot" />
   </div>
@@ -44,13 +62,12 @@ watch(() => [props.profile?.avatarHash, props.profile?.updatedAt], resolve)
 .avatar {
   position: relative;
   flex: none;
-  border-radius: 50%;
-  background: linear-gradient(160deg, #4b5a74, #3a465c);
+  border-radius: 28%;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  color: #fff;
+  color: #fffaf6;
 }
 .avatar img {
   width: 100%;
@@ -58,17 +75,17 @@ watch(() => [props.profile?.avatarHash, props.profile?.updatedAt], resolve)
   object-fit: cover;
 }
 .initial {
-  font-weight: 700;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-weight: 600;
 }
 .dot {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 28%;
-  height: 28%;
+  width: 26%;
+  height: 26%;
   border-radius: 50%;
   background: var(--ok);
   border: 2px solid var(--bg-sidebar);
+  box-sizing: border-box;
 }
 </style>

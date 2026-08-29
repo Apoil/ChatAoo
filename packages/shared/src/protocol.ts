@@ -2,7 +2,7 @@
  * 线上（服务器）与线下（局域网 P2P）两套线协议定义。
  * 所有载荷均为 JSON；局域网 TCP 使用 "JSON 行" 帧（每行一条消息）。
  */
-import type { Attachment, Message } from './types.js'
+import type { Attachment, FriendStatus, Message } from './types.js'
 
 /* ------------------------------------------------------------------ */
 /* 服务器 REST + WebSocket 协议                                         */
@@ -46,6 +46,7 @@ export interface ServerMessage {
   attachment?: Attachment
   createdAt: number
   seq: number
+  revoked?: boolean
 }
 
 /** 服务器资料快照 */
@@ -68,6 +69,8 @@ export interface ServerFriend {
   statusText?: string
   /** 对方是否已确认（双向） */
   confirmed: boolean
+  /** 相对当前用户：friends / outgoing / incoming */
+  status?: FriendStatus
   updatedAt: number
 }
 
@@ -98,6 +101,7 @@ export type ServerToClient =
   | { type: 'friend'; friend: ServerFriend }
   | { type: 'presence'; userId: string; online: boolean }
   | { type: 'sync'; result: SyncResult }
+  | { type: 'message-deleted'; id: string; conversationId: string }
 
 /* ------------------------------------------------------------------ */
 /* 局域网 P2P 协议                                                      */
@@ -138,6 +142,7 @@ export type P2PClientMsg =
   | { type: 'file-data'; transferId: string; offset: number; data: string }
   | { type: 'file-done'; transferId: string; sha256: string }
   | { type: 'file-cancel'; transferId: string; reason?: string }
+  | { type: 'message-delete'; messageId: string }
   | { type: 'bye' }
 
 /** P2P：服务端（被连方） -> 客户端 */
@@ -150,6 +155,7 @@ export type P2PServerMsg =
   | { type: 'file-data'; transferId: string; offset: number; data: string }
   | { type: 'file-done'; transferId: string; sha256: string }
   | { type: 'file-cancel'; transferId: string; reason?: string }
+  | { type: 'message-delete'; messageId: string }
   | { type: 'bye' }
 
 export type P2PMsg = P2PClientMsg | P2PServerMsg
@@ -165,7 +171,8 @@ export function directConversationId(a: string, b: string): string {
   return [a, b].sort().join('__')
 }
 
-export function previewOfMessage(text?: string, kind?: Message['kind']): string {
+export function previewOfMessage(text?: string, kind?: Message['kind'], revoked?: boolean): string {
+  if (revoked) return '消息已撤回'
   if (text) return text.length > 60 ? text.slice(0, 60) + '…' : text
   switch (kind) {
     case 'attachment':

@@ -145,6 +145,34 @@ export class LocalStore {
     await this.convPut(c)
   }
 
+  /** 打开好友会话时若尚无记录则建一条空会话 */
+  async convEnsure(id: string, peerId: string): Promise<Conversation> {
+    const existing = await this.convGet(id)
+    if (existing) {
+      if (!existing.peerId) {
+        existing.peerId = peerId
+        await this.convPut(existing)
+      }
+      return existing
+    }
+    const now = Date.now()
+    const c: Conversation = {
+      id,
+      kind: 'direct',
+      peerId,
+      lastMessageAt: now,
+      lastMessagePreview: '',
+      unreadCount: 0,
+      updatedAt: now,
+    }
+    await this.convPut(c)
+    return c
+  }
+
+  async convDel(id: string): Promise<void> {
+    await this.db.delete('conversations', id)
+  }
+
   async convSetUnread(id: string, count: number): Promise<void> {
     const c = await this.convGet(id)
     if (!c) return
@@ -163,15 +191,16 @@ export class LocalStore {
   }
 
   /** 会话内按时间倒序分页 */
-  async msgsIn(conversationId: string, before = Date.now() + 1, limit = 50): Promise<Message[]> {
-    const idx = this.db.transaction('messages').store.index('byConv')
-    let cursor = await idx.openCursor(IDBKeyRange.bound([conversationId, -1], [conversationId, before]))
-    const out: Message[] = []
-    while (cursor && out.length < limit) {
-      out.push(cursor.value)
-      cursor = await cursor.continue()
-    }
-    return out
+  async msgsIn(conversationId: string, before = Number.MAX_SAFE_INTEGER, limit = 50): Promise<Message[]> {
+    const all = await this.db.getAll('messages')
+    return all
+      .filter((m) => m.conversationId === conversationId && m.createdAt < before && !m.hiddenForMe)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(-limit)
+  }
+
+  async msgDel(id: string): Promise<void> {
+    await this.db.delete('messages', id)
   }
 
   async msgSetStatus(id: string, status: Message['status']): Promise<void> {
@@ -219,6 +248,10 @@ export class LocalStore {
 
   async friendsList(): Promise<FriendRecord[]> {
     return (await this.db.getAll('friends')).sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  async friendDel(userId: string): Promise<void> {
+    await this.db.delete('friends', userId)
   }
 
   /* ---------------- 待同步队列 ---------------- */

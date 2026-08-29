@@ -11,7 +11,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
 import websocket from '@fastify/websocket'
-import type { ClientToServer, ServerToClient } from '@chataoo/shared'
+import { APP_VERSION_LABEL, type ClientToServer, type ServerToClient } from '@chataoo/shared'
 import { openDb } from './db.js'
 import { Hub } from './hub.js'
 import { authHook, registerRoutes } from './routes.js'
@@ -72,6 +72,7 @@ app.get('/api/v1/ws', { websocket: true }, (socket, req) => {
       )
       socket.send(JSON.stringify({ type: 'auth-ok' } satisfies ServerToClient))
       hub.add(userId, socket)
+      hub.sendPresenceSnapshot(userId)
       hub.broadcastPresence(userId)
       return
     }
@@ -86,7 +87,7 @@ app.get('/api/v1/ws', { websocket: true }, (socket, req) => {
   })
 })
 
-app.get('/health', async () => ({ ok: true, version: '0.1.0', time: Date.now() }))
+app.get('/health', async () => ({ ok: true, version: APP_VERSION_LABEL, time: Date.now() }))
 
 try {
   mkdirSync(join(DATA_DIR, 'files', 'm'), { recursive: true })

@@ -15,7 +15,9 @@ export interface ChataooBridge {
     write(sha: string, buf: ArrayBuffer): Promise<void>
     read(sha: string): Promise<ArrayBuffer | null>
     cache(url: string, sha: string): Promise<boolean>
-    url(sha: string): string
+    url(sha: string, mime?: string): string
+    pathOfFile(file: File): string | undefined
+    importPath(srcPath: string): Promise<{ sha256: string; size: number }>
   }
   lan: {
     start(): Promise<void>
@@ -31,7 +33,7 @@ export interface ChataooBridge {
   }
   app: {
     openExternal(url: string): Promise<void>
-    saveFile(name: string, url: string): Promise<void>
+    saveFile(name: string, url: string): Promise<'saved' | 'cancelled'>
   }
   win: {
     resize(mode: 'login' | 'chat'): Promise<void>
@@ -53,8 +55,20 @@ export class DesktopMedia implements MediaStore {
     return this.bridge.media.has(sha)
   }
 
-  url(sha: string): Promise<string> {
-    return Promise.resolve(this.bridge.media.url(sha))
+  url(sha: string, mime = 'application/octet-stream'): Promise<string> {
+    return Promise.resolve(this.bridge.media.url(sha, mime))
+  }
+
+  pathOfFile(file: File): string | undefined {
+    try {
+      return this.bridge.media.pathOfFile(file)
+    } catch {
+      return undefined
+    }
+  }
+
+  importPath(filePath: string): Promise<{ sha256: string; size: number }> {
+    return this.bridge.media.importPath(filePath)
   }
 
   async write(sha: string, blob: Blob): Promise<void> {

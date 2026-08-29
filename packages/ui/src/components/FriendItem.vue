@@ -4,7 +4,11 @@ import type { Profile } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
 import Avatar from './Avatar.vue'
 
-const props = defineProps<{ profile: Profile | null | undefined; friendStatus: string }>()
+const props = defineProps<{
+  profile: Profile | null | undefined
+  friendStatus: string
+  userId?: string
+}>()
 const store = useChatStore()
 
 const statusLabel = computed(() => {
@@ -13,10 +17,8 @@ const statusLabel = computed(() => {
       return '等待验证'
     case 'incoming':
       return '待处理'
-    case 'friends':
-      return '好友'
     default:
-      return '添加好友'
+      return ''
   }
 })
 
@@ -25,7 +27,8 @@ function accept(): void {
 }
 
 function open(): void {
-  if (props.profile && props.friendStatus === 'friends') void store.openConversation(props.profile.userId)
+  const id = props.profile?.userId ?? props.userId
+  if (id && props.friendStatus === 'friends') void store.openConversation(id)
 }
 </script>
 
@@ -35,16 +38,12 @@ function open(): void {
     <div class="meta">
       <div class="name">{{ profile?.displayName ?? '未知用户' }}</div>
       <div class="sub">
-        <span v-if="store.lanPeers[profile?.userId ?? '']?.online" class="lan-pill">局域网在线</span>
-        <span v-else-if="store.presence[profile?.userId ?? '']" class="online-pill">在线</span>
+        <span v-if="store.lanPeers[profile?.userId ?? '']?.online" class="lan">局域网</span>
+        <span v-else-if="store.presence[profile?.userId ?? '']" class="on">在线</span>
+        <span v-else-if="statusLabel" class="wait">{{ statusLabel }}</span>
       </div>
     </div>
-    <template v-if="friendStatus === 'incoming'">
-      <button class="btn btn-primary sm" @click.stop="accept">通过</button>
-    </template>
-    <template v-else>
-      <span class="pill">{{ statusLabel }}</span>
-    </template>
+    <button v-if="friendStatus === 'incoming'" class="btn btn-primary sm" @click.stop="accept">通过</button>
   </div>
 </template>
 
@@ -52,9 +51,8 @@ function open(): void {
 .row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: var(--radius);
+  gap: 12px;
+  padding: 11px 16px;
 }
 .row.clickable {
   cursor: pointer;
@@ -77,20 +75,19 @@ function open(): void {
   display: flex;
   gap: 6px;
   margin-top: 2px;
+  font-size: 11.5px;
 }
-.lan-pill {
-  font-size: 11px;
-  color: var(--accent-3);
-  background: rgba(34, 211, 238, 0.12);
-  padding: 1px 8px;
-  border-radius: var(--radius-full);
+.lan {
+  color: var(--lan);
 }
-.online-pill {
-  font-size: 11px;
+.on {
   color: var(--ok);
 }
+.wait {
+  color: var(--text-faint);
+}
 .btn.sm {
-  padding: 6px 14px;
+  padding: 5px 12px;
   font-size: 12px;
 }
 </style>

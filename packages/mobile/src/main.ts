@@ -3,10 +3,10 @@ import { createPinia } from 'pinia'
 import { ChatSession } from '@chataoo/app-core'
 import '@chataoo/ui/theme.css'
 import App from './App.vue'
-import { CapacitorLan, CapacitorMedia } from './bridge'
+import { CapacitorLan, CapacitorMedia, saveFileToDevice } from './bridge'
 
 async function bootstrap(): Promise<void> {
-  const serverUrl = localStorage.getItem('chataoo:serverUrl') ?? 'http://192.168.1.146:47800'
+  const serverUrl = localStorage.getItem('chataoo:serverUrl') ?? 'http://192.168.1.5:47800'
 
   const platform = {
     platform: 'mobile' as const,
@@ -21,13 +21,7 @@ async function bootstrap(): Promise<void> {
       a.rel = 'noopener'
       a.click()
     },
-    saveFile: (name: string, url: string) => {
-      // 移动端：触发下载/分享（系统处理）
-      const a = document.createElement('a')
-      a.href = url
-      a.download = name
-      a.click()
-    },
+    saveFile: (name: string, url: string) => saveFileToDevice(name, url),
   }
 
   const session = await ChatSession.create(platform)
@@ -40,5 +34,5 @@ async function bootstrap(): Promise<void> {
 
 void bootstrap().catch((e) => {
   console.error('bootstrap failed:', e)
-  document.body.innerHTML = `<pre style="color:#f87171;padding:40px;white-space:pre-wrap">启动失败：${String(e)}</pre>`
+  document.body.innerHTML = `<pre style="color:#b5453a;padding:40px;white-space:pre-wrap">启动失败：${String(e)}</pre>`
 })

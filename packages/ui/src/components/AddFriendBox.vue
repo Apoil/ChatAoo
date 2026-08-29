@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useChatStore } from '../stores/chat'
+import Icon from './Icon.vue'
 
 const store = useChatStore()
 const userId = ref('')
@@ -28,11 +29,12 @@ async function submit(): Promise<void> {
     <input
       v-model="userId"
       class="input"
-      placeholder="输入对方的用户名（如 alice）"
+      placeholder="对方用户名，例如 alice"
       @keydown.enter="submit"
     />
-    <button class="btn btn-primary" :disabled="status === 'sending'" @click="submit">
-      {{ status === 'sending' ? '发送中…' : '添加' }}
+    <button class="btn btn-primary add-btn" :disabled="status === 'sending'" title="添加好友" @click="submit">
+      <Icon name="plus" :size="16" />
+      添加
     </button>
     <div v-if="msg" class="msg" :class="status">{{ msg }}</div>
   </div>
@@ -40,23 +42,29 @@ async function submit(): Promise<void> {
 
 <style scoped>
 .add {
-  padding: 10px 14px 4px;
+  padding: 10px 14px 8px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-soft);
 }
 .input {
   flex: 1;
-  min-width: 160px;
-  background: var(--bg-input);
+  min-width: 140px;
+  height: 34px;
+  background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 8px 12px;
+  padding: 0 10px;
   font-size: 13px;
   outline: none;
 }
 .input:focus {
   border-color: var(--accent);
+}
+.add-btn {
+  height: 34px;
+  padding: 0 12px;
 }
 .msg {
   width: 100%;

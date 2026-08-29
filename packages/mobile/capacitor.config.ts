@@ -8,6 +8,7 @@ const config: CapacitorConfig = {
     allowMixedContent: true,
   },
   plugins: {
+    Filesystem: {},
     LanSocket: {},
   },
 }

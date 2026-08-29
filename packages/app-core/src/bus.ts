@@ -41,6 +41,10 @@ export interface BusEvents {
   'media-cached': { sha256: string }
   /** 头像已更新 */
   'my-avatar': { url?: string; sha256?: string }
+  /** 附件发送进度 */
+  'upload-progress': { id: string; progress: number; phase?: string }
+  /** 消息撤回/删除 */
+  'message-deleted': { id: string; conversationId: string; revoked?: boolean }
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void

@@ -45,11 +45,14 @@ export interface Db {
   messagesSince(since: number): MessageRow[]
   messagesInConversation(conversationId: string, before: number, limit: number): MessageRow[]
   messageExists(id: string): boolean
+  messageById(id: string): MessageRow | undefined
   messageSeq(id: string): number | undefined
+  revokeMessage(id: string, seq: number): boolean
   maxSeq(): number
   /* 文件 */
   insertFile(f: FileRow): void
   fileById(id: string): FileRow | undefined
+  fileBySha(sha256: string): FileRow | undefined
   /* 工具 */
   transaction<T>(fn: () => T): T
 }
@@ -83,6 +86,7 @@ export interface MessageRow {
   attachment: string | null
   createdAt: number
   seq: number
+  revoked?: number
 }
 
 export interface FileRow {
@@ -148,7 +152,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_sha ON files(sha256);
 `
 
-function rowToMessage(r: MessageRow): Message {
+export function rowToMessage(r: MessageRow): Message {
   const m: Message = {
     id: r.id,
     conversationId: r.conversationId,
@@ -158,8 +162,19 @@ function rowToMessage(r: MessageRow): Message {
     status: 'delivered',
     seq: r.seq,
   }
+  if (r.revoked) {
+    m.revoked = true
+    m.text = '消息已撤回'
+    return m
+  }
   if (r.text !== null) m.text = r.text
-  if (r.attachment !== null) m.attachment = JSON.parse(r.attachment) as Attachment
+  if (r.attachment !== null) {
+    try {
+      m.attachment = JSON.parse(r.attachment) as Attachment
+    } catch {
+      /* 坏 JSON 跳过，避免整页同步失败 */
+    }
+  }
   return m
 }
 
@@ -169,6 +184,10 @@ function migrate(db: DatabaseSync): void {
   const has = (name: string) => cols.some((c) => c.name === name)
   if (!has('username')) db.exec('ALTER TABLE users ADD COLUMN username TEXT')
   if (!has('passwordHash')) db.exec('ALTER TABLE users ADD COLUMN passwordHash TEXT')
+  const msgCols = db.prepare('PRAGMA table_info(messages)').all() as { name: string }[]
+  if (!msgCols.some((c) => c.name === 'revoked')) {
+    db.exec('ALTER TABLE messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0')
+  }
   if (!has('username')) return
   try {
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)')
@@ -216,12 +235,17 @@ export function openDb(dataDir: string): Db {
       `SELECT * FROM messages WHERE conversationId = ? AND createdAt < ? ORDER BY createdAt DESC LIMIT ?`,
     ),
     messageExists: db.prepare('SELECT id FROM messages WHERE id = ?'),
+    messageById: db.prepare('SELECT * FROM messages WHERE id = ?'),
     messageSeq: db.prepare('SELECT seq FROM messages WHERE id = ?'),
+    revokeMessage: db.prepare(
+      `UPDATE messages SET revoked = 1, kind = 'system', text = '消息已撤回', attachment = NULL, seq = ? WHERE id = ? AND revoked = 0`,
+    ),
     maxSeq: db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages'),
     insertFile: db.prepare(
       `INSERT INTO files (id, ownerId, sha256, kind, name, mime, size, path, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     fileById: db.prepare('SELECT * FROM files WHERE id = ?'),
+    fileBySha: db.prepare('SELECT * FROM files WHERE sha256 = ? ORDER BY createdAt DESC LIMIT 1'),
   }
 
   return {
@@ -235,6 +259,30 @@ export function openDb(dataDir: string): Db {
       try {
         stmt.rebindUser.run(newUserId, displayName, Date.now(), username)
         stmt.deleteUserTokens.run(oldUserId)
+        db.prepare('UPDATE friends SET a = ? WHERE a = ?').run(newUserId, oldUserId)
+        db.prepare('UPDATE friends SET b = ? WHERE b = ?').run(newUserId, oldUserId)
+        db.prepare('UPDATE messages SET senderId = ? WHERE senderId = ?').run(newUserId, oldUserId)
+        db.prepare('UPDATE files SET ownerId = ? WHERE ownerId = ?').run(newUserId, oldUserId)
+        const convs = db
+          .prepare(
+            'SELECT DISTINCT conversationId FROM messages WHERE conversationId LIKE ? OR conversationId LIKE ?',
+          )
+          .all(`${oldUserId}__%`, `%__${oldUserId}`) as { conversationId: string }[]
+        const updConv = db.prepare('UPDATE messages SET conversationId = ? WHERE conversationId = ?')
+        for (const row of convs) {
+          const next = rewriteConversationId(row.conversationId, oldUserId, newUserId)
+          if (next !== row.conversationId) updConv.run(next, row.conversationId)
+        }
+        const user = stmt.getUser.get(newUserId) as UserRow | undefined
+        if (user?.avatarUrl?.includes(oldUserId)) {
+          stmt.updateProfile.run(
+            user.avatarUrl.split(oldUserId).join(newUserId),
+            user.avatarHash,
+            user.statusText,
+            Date.now(),
+            newUserId,
+          )
+        }
         db.exec('COMMIT')
       } catch (e) {
         db.exec('ROLLBACK')
@@ -300,11 +348,14 @@ export function openDb(dataDir: string): Db {
     messagesInConversation: (conversationId, before, limit) =>
       stmt.messagesInConv.all(conversationId, before, limit) as unknown as MessageRow[],
     messageExists: (id) => stmt.messageExists.get(id) !== undefined,
+    messageById: (id) => stmt.messageById.get(id) as MessageRow | undefined,
     messageSeq: (id) => (stmt.messageSeq.get(id) as { seq: number } | undefined)?.seq,
+    revokeMessage: (id, seq) => stmt.revokeMessage.run(seq, id).changes > 0,
     maxSeq: () => (stmt.maxSeq.get() as { m: number }).m,
     insertFile: (f) =>
       stmt.insertFile.run(f.id, f.ownerId, f.sha256, f.kind, f.name, f.mime, f.size, f.path, f.createdAt),
     fileById: (id) => stmt.fileById.get(id) as FileRow | undefined,
+    fileBySha: (sha256) => stmt.fileBySha.get(sha256) as FileRow | undefined,
     transaction: <T>(fn: () => T): T => {
       db.exec('BEGIN IMMEDIATE')
       try {
@@ -317,6 +368,12 @@ export function openDb(dataDir: string): Db {
       }
     },
   }
+}
+
+function rewriteConversationId(id: string, oldUserId: string, newUserId: string): string {
+  const parts = id.split('__')
+  if (parts.length !== 2) return id
+  return parts.map((p) => (p === oldUserId ? newUserId : p)).sort().join('__')
 }
 
 export function toProfile(u: UserRow): Profile {

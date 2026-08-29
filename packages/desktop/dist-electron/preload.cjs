@@ -2,7 +2,7 @@
  * preload（CommonJS，sandbox 兼容）：以最小权限暴露 IPC 桥。
  * 注意：Electron sandbox preload 仅支持 CommonJS，不能用 TS/ESM 编译产物。
  */
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('chataoo', {
   platform: 'desktop',
@@ -11,7 +11,18 @@ contextBridge.exposeInMainWorld('chataoo', {
     write: (sha, buf) => ipcRenderer.invoke('media:write', sha, buf),
     read: (sha) => ipcRenderer.invoke('media:read', sha),
     cache: (url, sha) => ipcRenderer.invoke('media:cache', url, sha),
-    url: (sha) => `chataoo-media://${sha}`,
+    importPath: (srcPath) => ipcRenderer.invoke('media:importPath', srcPath),
+    pathOfFile: (file) => {
+      try {
+        return webUtils.getPathForFile(file)
+      } catch {
+        return undefined
+      }
+    },
+    url: (sha, mime) => {
+      const q = mime ? `?t=${encodeURIComponent(mime)}` : ''
+      return `chataoo-media://local/${sha}${q}`
+    },
   },
   lan: {
     start: () => ipcRenderer.invoke('lan:start'),
