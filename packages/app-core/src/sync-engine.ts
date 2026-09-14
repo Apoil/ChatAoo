@@ -174,7 +174,14 @@ export class SyncEngine {
   }
 
   private async applyFriendEntries(friends: ServerFriend[]): Promise<void> {
+    const me = this.deps.identity.userId
     for (const f of friends) {
+      if (f.status === 'none') {
+        await this.deps.store.purgePeer(me, f.userId)
+        this.deps.bus.emit('friend', { userId: f.userId, status: 'none' })
+        this.deps.bus.emit('conversations', {})
+        continue
+      }
       const st = this.friendStatusOf(f)
       if (!st) continue
       await this.deps.store.friendPut({ userId: f.userId, status: st, updatedAt: f.updatedAt })
@@ -263,28 +270,27 @@ export class SyncEngine {
   async hydrateFriends(): Promise<void> {
     try {
       const { friends } = await this.deps.api.friends()
+      const me = this.deps.identity.userId
       const keep = new Set(friends.map((f) => f.userId))
+      keep.add(me)
       for (const local of await this.deps.store.friendsList()) {
-        if (!keep.has(local.userId)) await this.deps.store.friendDel(local.userId)
+        if (!keep.has(local.userId)) await this.deps.store.purgePeer(me, local.userId)
       }
       await this.applyFriendEntries(friends)
       await this.reconcileLocalPeers()
+      this.deps.bus.emit('friend', { userId: me, status: 'friends' })
     } catch (e) {
       console.warn('hydrate friends failed:', e)
     }
   }
 
-  /** 把换设备留下的旧会话/消息并到当前好友，并删掉幽灵会话 */
+  /** 删掉不在服务器好友列表里的本地幽灵身份（换设备留下的旧 userId） */
   private async reconcileLocalPeers(): Promise<void> {
     const store = this.deps.store
     const me = this.deps.identity.userId
     const friends = (await store.friendsList()).filter((f) => f.status !== 'none')
-    const friendIds = new Set(friends.map((f) => f.userId))
-    const nameToFriend = new Map<string, string>()
-    for (const f of friends) {
-      const p = await store.profGet(f.userId)
-      if (p?.displayName) nameToFriend.set(p.displayName, f.userId)
-    }
+    const keep = new Set(friends.map((f) => f.userId))
+    keep.add(me)
     for (const c of await store.convs()) {
       const parts = c.id.split('__')
       if (parts.length !== 2) {
@@ -292,20 +298,10 @@ export class SyncEngine {
         continue
       }
       const peer = parts[0] === me ? parts[1]! : parts[0]!
-      if (friendIds.has(peer)) continue
-      const ghost = await store.profGet(peer)
-      const destPeer = ghost?.displayName ? nameToFriend.get(ghost.displayName) : undefined
-      if (destPeer) {
-        const dest = directConversationId(me, destPeer)
-        for (const m of (await store.allMessages()).filter((x) => x.conversationId === c.id)) {
-          m.conversationId = dest
-          await store.msgPut(m)
-        }
-        if (c.lastMessagePreview || c.lastMessageAt) {
-          await store.convTouch(dest, c.lastMessagePreview ?? '', c.lastMessageAt || Date.now())
-        }
-      }
-      await store.convDel(c.id)
+      if (!keep.has(peer)) await store.purgePeer(me, peer)
+    }
+    for (const p of await store.profsAll()) {
+      if (!keep.has(p.userId)) await store.profDel(p.userId)
     }
     this.deps.bus.emit('conversations', {})
   }

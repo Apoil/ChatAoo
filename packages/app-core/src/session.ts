@@ -208,14 +208,16 @@ export class ChatSession {
     this.bus.emit('auth', { authed: true })
   }
 
-  /** 修改昵称（在线；离线时仅改本地，回连后重试） */
+  /** 修改昵称（在线写服务器；离线仅改本地，回连后随资料同步） */
   async updateDisplayName(name: string): Promise<void> {
+    if (!this.identity) throw new Error('未登录')
     const trimmed = name.trim()
-    if (!trimmed || trimmed === this.identity.displayName) return
+    if (!trimmed || trimmed.length > 30) throw new Error('昵称需 1-30 字')
+    if (trimmed === this.identity.displayName) return
     try {
       await this.api.updateProfile({ displayName: trimmed })
-    } catch {
-      /* 离线：仅本地生效 */
+    } catch (e) {
+      if (this.isOnline) throw e
     }
     this.identity.displayName = trimmed
     await this.store.kvSet('identity', this.identity)

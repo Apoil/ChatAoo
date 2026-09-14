@@ -259,8 +259,7 @@ export function openDb(dataDir: string): Db {
       try {
         stmt.rebindUser.run(newUserId, displayName, Date.now(), username)
         stmt.deleteUserTokens.run(oldUserId)
-        db.prepare('UPDATE friends SET a = ? WHERE a = ?').run(newUserId, oldUserId)
-        db.prepare('UPDATE friends SET b = ? WHERE b = ?').run(newUserId, oldUserId)
+        remapFriendUserId(db, oldUserId, newUserId)
         db.prepare('UPDATE messages SET senderId = ? WHERE senderId = ?').run(newUserId, oldUserId)
         db.prepare('UPDATE files SET ownerId = ? WHERE ownerId = ?').run(newUserId, oldUserId)
         const convs = db
@@ -374,6 +373,35 @@ function rewriteConversationId(id: string, oldUserId: string, newUserId: string)
   const parts = id.split('__')
   if (parts.length !== 2) return id
   return parts.map((p) => (p === oldUserId ? newUserId : p)).sort().join('__')
+}
+
+/** 把好友边从旧设备身份迁到新身份；已存在的 (a,b) 合并而不是硬 UPDATE（避免 PRIMARY KEY 冲突） */
+function remapFriendUserId(db: DatabaseSync, oldUserId: string, newUserId: string): void {
+  const rows = db
+    .prepare('SELECT a, b, status, updatedAt FROM friends WHERE a = ? OR b = ?')
+    .all(oldUserId, oldUserId) as FriendRow[]
+  const del = db.prepare('DELETE FROM friends WHERE a = ? AND b = ?')
+  const get = db.prepare('SELECT a, b, status, updatedAt FROM friends WHERE a = ? AND b = ?')
+  const put = db.prepare('INSERT OR REPLACE INTO friends (a, b, status, updatedAt) VALUES (?, ?, ?, ?)')
+  const rank = (status: string) => (status === 'confirmed' ? 2 : 1)
+
+  for (const row of rows) {
+    del.run(row.a, row.b)
+    const a = row.a === oldUserId ? newUserId : row.a
+    const b = row.b === oldUserId ? newUserId : row.b
+    if (a === b) continue
+    const existing = get.get(a, b) as FriendRow | undefined
+    if (!existing) {
+      put.run(a, b, row.status, row.updatedAt)
+      continue
+    }
+    put.run(
+      a,
+      b,
+      rank(row.status) >= rank(existing.status) ? row.status : existing.status,
+      Math.max(row.updatedAt, existing.updatedAt),
+    )
+  }
 }
 
 export function toProfile(u: UserRow): Profile {

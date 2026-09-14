@@ -3,7 +3,7 @@
  * 所有数据先落本地：消息、会话、资料、好友、待同步队列、同步游标。
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import type { Conversation, FriendStatus, Message, Profile } from '@chataoo/shared'
+import { directConversationId, type Conversation, type FriendStatus, type Message, type Profile } from '@chataoo/shared'
 
 export interface FriendRecord {
   userId: string
@@ -231,6 +231,14 @@ export class LocalStore {
     return this.db.get('profiles', userId)
   }
 
+  async profDel(userId: string): Promise<void> {
+    await this.db.delete('profiles', userId)
+  }
+
+  async profsAll(): Promise<Profile[]> {
+    return this.db.getAll('profiles')
+  }
+
   async profsSince(t: number): Promise<Profile[]> {
     const all = await this.db.getAllFromIndex('profiles', 'byUpdatedAt')
     return all.filter((p) => p.updatedAt > t)
@@ -252,6 +260,23 @@ export class LocalStore {
 
   async friendDel(userId: string): Promise<void> {
     await this.db.delete('friends', userId)
+  }
+
+  /** 删掉某个对端的好友记录、资料、会话、消息和待发送队列（不含自己） */
+  async purgePeer(me: string, peerId: string): Promise<void> {
+    if (!peerId || peerId === me) return
+    await this.friendDel(peerId)
+    await this.profDel(peerId)
+    const convId = directConversationId(me, peerId)
+    await this.convDel(convId)
+    for (const m of await this.allMessages()) {
+      if (m.conversationId === convId || m.senderId === peerId) await this.msgDel(m.id)
+    }
+    for (const e of await this.outboxList()) {
+      if (e.message.conversationId === convId || e.message.senderId === peerId) {
+        await this.outboxRemove(e.message.id)
+      }
+    }
   }
 
   /* ---------------- 待同步队列 ---------------- */

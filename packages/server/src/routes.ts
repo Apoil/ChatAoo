@@ -531,12 +531,15 @@ function friendEntry(u: UserRow, status: FriendStatus = 'friends'): ServerFriend
 function listFriendEntries(db: Db, me: string): ServerFriend[] {
   const rows = db.listFriends(me) as FriendRow[]
   const out: ServerFriend[] = []
+  const seen = new Set<string>()
   for (const r of rows) {
     const otherId = r.a === me ? r.b : r.a
+    if (seen.has(otherId)) continue
     const other = db.getUser(otherId)
     if (!other) continue
     const st = db.friendStatus(me, otherId)
     if (st === 'none') continue
+    seen.add(otherId)
     out.push(friendEntry(other, st))
   }
   return out

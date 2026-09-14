@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { APP_VERSION_LABEL, type Profile } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
 import Avatar from './Avatar.vue'
@@ -34,6 +34,8 @@ const cropping = ref(false)
 const cropSrc = ref('')
 const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarError = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
+const nameError = ref('')
 
 function pickAvatar(ev: Event): void {
   if (!isSelf.value) return
@@ -60,19 +62,31 @@ const editingName = ref(false)
 const nameDraft = ref('')
 const nameSaving = ref(false)
 
-function startEditName(): void {
+async function startEditName(): Promise<void> {
   nameDraft.value = profile.value?.displayName ?? ''
+  nameError.value = ''
   editingName.value = true
+  await nextTick()
+  nameInput.value?.focus()
+  nameInput.value?.select()
 }
 
 async function saveName(): Promise<void> {
   const s = store.session
   if (!s) return
+  const next = nameDraft.value.trim()
+  if (!next || next.length > 30) {
+    nameError.value = '昵称需 1-30 字'
+    return
+  }
   nameSaving.value = true
+  nameError.value = ''
   try {
-    await s.updateDisplayName(nameDraft.value.trim())
+    await s.updateDisplayName(next)
     editingName.value = false
     await store.refreshProfiles()
+  } catch (e) {
+    nameError.value = e instanceof Error ? e.message : String(e)
   } finally {
     nameSaving.value = false
   }
@@ -121,7 +135,7 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
           class="avatar-file"
           type="file"
           accept="image/*"
-          @click.stop
+          hidden
           @change="pickAvatar"
         />
       </div>
@@ -129,19 +143,27 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
 
       <div class="name-row">
         <template v-if="isSelf && editingName">
-          <input v-model="nameDraft" class="name-input" maxlength="30" @keydown.enter="saveName" />
+          <input
+            ref="nameInput"
+            v-model="nameDraft"
+            class="name-input"
+            maxlength="30"
+            placeholder="昵称"
+            @keydown.enter="saveName"
+          />
           <button class="btn btn-primary sm" :disabled="nameSaving" @click="saveName">保存</button>
           <button class="btn btn-ghost sm" @click="editingName = false">取消</button>
         </template>
         <template v-else>
           <h2 class="name">{{ profile?.displayName ?? '未知用户' }}</h2>
-          <button v-if="isSelf" class="icon-btn" title="修改昵称" @click="startEditName">
+          <button v-if="isSelf" class="icon-btn" title="修改昵称" @click.stop="startEditName">
             <Icon name="edit" :size="16" />
           </button>
         </template>
       </div>
+      <p v-if="nameError" class="avatar-error">{{ nameError }}</p>
 
-      <p v-if="username" class="uname">@{{ username }}</p>
+      <p v-if="username" class="uname">@{{ username }} · 用户名不可改</p>
       <p v-else-if="peerOnline" class="uname on">在线</p>
 
       <dl class="meta">
@@ -210,17 +232,9 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
 .avatar-wrap {
   position: relative;
   margin-bottom: 8px;
+  width: fit-content;
 }
 .avatar-wrap.editable {
-  cursor: pointer;
-}
-.avatar-file {
-  position: absolute;
-  inset: 0;
-  opacity: 0.01;
-  width: 100%;
-  height: 100%;
-  font-size: 0;
   cursor: pointer;
 }
 .edit-tip {
@@ -237,8 +251,10 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
 .name-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 10px;
+  width: 100%;
 }
 .name {
   margin: 0;
@@ -246,13 +262,21 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
   font-weight: 600;
 }
 .name-input {
+  flex: 1;
+  min-width: 0;
   background: var(--bg-raised);
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
   font-size: 16px;
   outline: none;
-  width: 180px;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-app-region: no-drag;
+}
+.name-row .btn.sm {
+  flex: none;
+  white-space: nowrap;
 }
 .uname {
   margin: 4px 0 0;

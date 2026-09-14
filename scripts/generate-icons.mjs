@@ -260,7 +260,10 @@ for (const [dir, size] of Object.entries(mipmaps)) {
   if (existsSync(d)) {
     writeFileSync(join(d, 'ic_launcher.png'), render(size))
     writeFileSync(join(d, 'ic_launcher_round.png'), render(size))
-    console.log(`android ${dir}/ic_launcher.png`)
+    // 自适应图标前景：108dp 密度，透明底 + 缩进安全区，避免与 ic_launcher.xml 循环引用
+    const fg = Math.round(size * (108 / 48))
+    writeFileSync(join(d, 'ic_launcher_foreground.png'), render(fg, { transparent: true, pad: 0.17 }))
+    console.log(`android ${dir}/ic_launcher.png + foreground`)
   }
 }
 
