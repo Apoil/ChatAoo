@@ -1,0 +1,9 @@
+# 构建产物按字节比对，避免 Windows 上 CRLF/LF 反复造成“已修改”噪声
+packages/desktop/dist-electron/** -text
+
+# 常见二进制资源不做换行转换
+*.png binary
+*.ico binary
+*.jpg binary
+*.webp binary
+*.apk binary

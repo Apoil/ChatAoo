@@ -379,7 +379,7 @@ function rewriteConversationId(id: string, oldUserId: string, newUserId: string)
 function remapFriendUserId(db: DatabaseSync, oldUserId: string, newUserId: string): void {
   const rows = db
     .prepare('SELECT a, b, status, updatedAt FROM friends WHERE a = ? OR b = ?')
-    .all(oldUserId, oldUserId) as FriendRow[]
+    .all(oldUserId, oldUserId) as unknown as FriendRow[]
   const del = db.prepare('DELETE FROM friends WHERE a = ? AND b = ?')
   const get = db.prepare('SELECT a, b, status, updatedAt FROM friends WHERE a = ? AND b = ?')
   const put = db.prepare('INSERT OR REPLACE INTO friends (a, b, status, updatedAt) VALUES (?, ?, ?, ?)')
@@ -390,7 +390,7 @@ function remapFriendUserId(db: DatabaseSync, oldUserId: string, newUserId: strin
     const a = row.a === oldUserId ? newUserId : row.a
     const b = row.b === oldUserId ? newUserId : row.b
     if (a === b) continue
-    const existing = get.get(a, b) as FriendRow | undefined
+    const existing = get.get(a, b) as unknown as FriendRow | undefined
     if (!existing) {
       put.run(a, b, row.status, row.updatedAt)
       continue
