@@ -4,6 +4,13 @@
 
 ![logo](assets/icons/icon-256.png)
 
+## 下载
+
+已打包好的安装包在 [Releases](https://github.com/Apoil/ChatAoo/releases/latest)：
+
+- **Windows x64**：`ChatAoo-Setup-1.0.3.exe`（NSIS 安装包，Win10/11）
+- **Android**：`ChatAoo-1.0.3-android-debug.apk`（手机 / 平板同一 APK，Android 6.0+；debug 签名，可自行重新签名）
+
 ## 核心特性
 
 - **多端**：Windows 桌面端（Electron + Vue 3）、Android 手机端、Android 平板端（Capacitor + Vue 3，自适应布局）
@@ -60,7 +67,7 @@ pnpm dev:server     # 监听 0.0.0.0:47800，数据存 packages/server/data
 ```bash
 pnpm dev:desktop    # 开发模式（Vite + Electron 热更新）
 # 或构建安装包：
-pnpm dist:desktop   # 产出 release/ChatAoo-Setup-0.1.0.exe
+pnpm dist:desktop   # 产出 packages/desktop/release/ChatAoo-Setup-<版本>.exe
 ```
 
 桌面端默认连接 `http://127.0.0.1:47800`，可在开发者工具中修改
