@@ -40,6 +40,7 @@ registerRoutes(app, { db, hub, dataDir: DATA_DIR })
 
 app.get('/api/v1/ws', { websocket: true }, (socket, req) => {
   let authed = false
+  let heartbeat: ReturnType<typeof setInterval> | undefined
   const authTimer = setTimeout(() => {
     if (!authed) {
       socket.send(JSON.stringify({ type: 'auth-fail', reason: 'timeout' } satisfies ServerToClient))
@@ -74,6 +75,15 @@ app.get('/api/v1/ws', { websocket: true }, (socket, req) => {
       hub.add(userId, socket)
       hub.sendPresenceSnapshot(userId)
       hub.broadcastPresence(userId)
+      // 反向代理（Cloudflare Tunnel / Nginx）对空闲 WebSocket 有 ~100s 超时，
+      // 定期发 ping 控制帧保活；浏览器会自动回 pong，无需客户端改动
+      heartbeat = setInterval(() => {
+        try {
+          socket.ping()
+        } catch {
+          /* socket 已关闭，close 事件会清理 */
+        }
+      }, 25000)
       return
     }
     if (!authed) return
@@ -84,6 +94,7 @@ app.get('/api/v1/ws', { websocket: true }, (socket, req) => {
 
   socket.on('close', () => {
     clearTimeout(authTimer)
+    if (heartbeat) clearInterval(heartbeat)
   })
 })
 
