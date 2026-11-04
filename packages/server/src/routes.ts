@@ -163,7 +163,23 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
       return reply.code(400).send({ error: 'userId does not match publicKey' })
     }
     if (db.userByUsername(username)) return reply.code(409).send({ error: '用户名已被占用' })
-    if (db.getUser(body.userId)) return reply.code(409).send({ error: '该设备已注册过账号' })
+    const existing = db.getUser(body.userId)
+    if (existing) {
+      if (existing.username) {
+        // 该设备身份已经是某个账号的绑定设备，不能再注册新账号
+        return reply.code(409).send({
+          error: `该设备已绑定账号「${existing.username}」，请直接登录该账号；要改用其他账号需要先在设置中重置设备身份`,
+          code: 'device-bound',
+          boundUsername: existing.username,
+        })
+      }
+      // 该设备身份只是「参与过局域网聊天但没注册账号」的占位行 → 直接认领为账号，保留历史数据
+      db.claimDeviceStub(body.userId, username, hashPassword(body.password), body.displayName)
+      const claimedToken = newToken()
+      db.createToken(claimedToken, body.userId)
+      const claimedUser = db.getUser(body.userId)!
+      return { token: claimedToken, user: publicUser(claimedUser) } satisfies AuthResponse
+    }
     db.createUser({
       userId: body.userId,
       username,
@@ -211,8 +227,32 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     if (account.userId === body.userId) {
       return reply.code(400).send({ error: '该设备已是账号绑定设备' })
     }
+    const occupied = db.getUser(body.userId)
+    if (occupied) {
+      if (occupied.username) {
+        // 目标设备已经绑定了另一个账号：不能静默抢占，给出可操作的提示
+        return reply.code(409).send({
+          error: `该设备已绑定账号「${occupied.username}」，请先用「${occupied.username}」登录；要改用「${username}」需要先在设置中重置设备身份`,
+          code: 'device-bound',
+          boundUsername: occupied.username,
+        })
+      }
+      // 只是未注册账号的身份占位行（例如局域网聊天时创建）→ 清掉后把账号接管过来
+      db.removeDeviceStub(body.userId)
+    }
     const oldId = account.userId
-    db.rebindUser(username, oldId, body.userId, account.displayName)
+    try {
+      db.rebindUser(username, oldId, body.userId, account.displayName)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.includes('UNIQUE constraint failed')) {
+        return reply.code(409).send({
+          error: '该设备已被其他账号占用，无法完成换绑；请先在设置中重置设备身份后重试',
+          code: 'device-bound',
+        })
+      }
+      throw e
+    }
     try {
       for (const f of readdirSync(avatarDir)) {
         if (f.startsWith(`${oldId}.`)) {

@@ -26,6 +26,10 @@ export interface Db {
     createdAt: number
   }): void
   userByUsername(username: string): UserRow | undefined
+  /** 把「未注册账号的设备身份占位行」直接升级为账号（保留其局域网历史数据） */
+  claimDeviceStub(userId: string, username: string, passwordHash: string, displayName: string): void
+  /** 删除未注册账号的设备身份占位行（连同 token/好友/消息/文件） */
+  removeDeviceStub(userId: string): void
   /** 重绑定账号到新设备（同时使旧设备全部 token 失效） */
   rebindUser(username: string, oldUserId: string, newUserId: string, displayName: string): void
   setDisplayName(userId: string, displayName: string): void
@@ -254,6 +258,27 @@ export function openDb(dataDir: string): Db {
     createUser: (u) =>
       stmt.createUser.run(u.userId, u.username, u.passwordHash, u.displayName, u.createdAt, u.createdAt),
     userByUsername: (username) => stmt.userByUsername.get(username) as UserRow | undefined,
+    claimDeviceStub: (userId, username, passwordHash, displayName) => {
+      db.prepare(
+        'UPDATE users SET username = ?, passwordHash = ?, displayName = ?, updatedAt = ? WHERE userId = ?',
+      ).run(username, passwordHash, displayName, Date.now(), userId)
+    },
+    removeDeviceStub: (userId) => {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        db.prepare('DELETE FROM tokens WHERE userId = ?').run(userId)
+        db.prepare('DELETE FROM friends WHERE a = ? OR b = ?').run(userId, userId)
+        db.prepare(
+          'DELETE FROM messages WHERE senderId = ? OR conversationId = ? OR conversationId LIKE ? OR conversationId LIKE ?',
+        ).run(userId, userId, `${userId}__%`, `%__${userId}`)
+        db.prepare('DELETE FROM files WHERE ownerId = ?').run(userId)
+        db.prepare('DELETE FROM users WHERE userId = ?').run(userId)
+        db.exec('COMMIT')
+      } catch (e) {
+        db.exec('ROLLBACK')
+        throw e
+      }
+    },
     rebindUser: (username, oldUserId, newUserId, displayName) => {
       db.exec('BEGIN IMMEDIATE')
       try {

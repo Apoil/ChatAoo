@@ -1,7 +1,7 @@
 /**
  * 服务器端到端冒烟测试：注册/登录/重绑定/用户名解析/好友/消息/同步/头像/文件/Range
  */
-const BASE = 'http://127.0.0.1:47800'
+const BASE = process.env.CHATAOO_TEST_BASE ?? 'http://127.0.0.1:47800'
 const { generateIdentity } = await import('../shared/dist/index.js')
 const alice = await generateIdentity('Alice')
 const bob = await generateIdentity('Bob')
