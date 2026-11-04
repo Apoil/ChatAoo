@@ -1,11 +1,15 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { ChatSession } from '@chataoo/app-core'
+import { initTheme } from '@chataoo/ui'
 import '@chataoo/ui/theme.css'
 import App from './App.vue'
 import { DesktopLan, DesktopMedia, type ChataooBridge } from './bridge'
 
 async function bootstrap(): Promise<void> {
+  // 主题必须在挂载前应用，避免首帧闪烁（html[data-theme] 由 theme.ts 写入）
+  initTheme()
+
   const bridge = window.chataoo as ChataooBridge
   const serverUrl = localStorage.getItem('chataoo:serverUrl') ?? 'http://127.0.0.1:47800'
 
@@ -31,5 +35,5 @@ async function bootstrap(): Promise<void> {
 
 void bootstrap().catch((e) => {
   console.error('bootstrap failed:', e)
-  document.body.innerHTML = `<pre style="color:#b5453a;padding:40px">启动失败：${String(e)}</pre>`
+  document.body.innerHTML = `<pre style="color:var(--danger);padding:var(--s-10)">启动失败：${String(e)}</pre>`
 })

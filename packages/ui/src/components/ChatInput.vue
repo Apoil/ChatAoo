@@ -1,19 +1,41 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+/**
+ * 输入区（设计系统 v2 §4 ChatInput）
+ * - 桌面 68px / 手机 60px，内容居中最大宽 980px
+ * - 多行自适应 40–120px，Enter 发送、Shift+Enter 换行（兼容中文输入法）
+ * - 附件 Popover：图片/视频、文件；拖拽整块虚线高亮
+ * 契约不变：emits send-text / send-files
+ * 新增可选：placeholder?
+ */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from './Icon.vue'
 
-const emit = defineEmits<{ 'send-text': [text: string]; 'send-files': [files: { blob: Blob; name: string }[]] }>()
+const props = withDefaults(defineProps<{ placeholder?: string }>(), { placeholder: '发送消息' })
+const emit = defineEmits<{
+  'send-text': [text: string]
+  'send-files': [files: { blob: Blob; name: string }[]]
+}>()
+
+const MIN_H = 40
+const MAX_H = 120
 
 const text = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const imageInput = ref<HTMLInputElement | null>(null)
 const area = ref<HTMLTextAreaElement | null>(null)
+const wrap = ref<HTMLElement | null>(null)
+const menuOpen = ref(false)
+const dragging = ref(false)
+let dragDepth = 0
+
+const canSend = computed(() => text.value.trim().length > 0)
 
 function resize(): void {
   const el = area.value
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, 140)}px`
+  el.style.height = `${Math.min(Math.max(el.scrollHeight, MIN_H), MAX_H)}px`
+  el.style.overflowY = el.scrollHeight > MAX_H ? 'auto' : 'hidden'
 }
 
 function submit(): void {
@@ -21,10 +43,19 @@ function submit(): void {
   if (!t) return
   emit('send-text', t)
   text.value = ''
-  void nextTick(resize)
+  menuOpen.value = false
+  void nextTick(() => {
+    resize()
+    area.value?.focus()
+  })
+}
+
+function toggleMenu(): void {
+  menuOpen.value = !menuOpen.value
 }
 
 function pickFiles(kind: 'file' | 'image'): void {
+  menuOpen.value = false
   if (kind === 'file') fileInput.value?.click()
   else imageInput.value?.click()
 }
@@ -41,15 +72,83 @@ function onFiles(ev: Event): void {
 }
 
 function onKeydown(ev: KeyboardEvent): void {
-  if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) {
+  // keyCode 229：部分中文/日文输入法组合态下 Enter 仍会上报，交给输入法处理
+  if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229) {
     ev.preventDefault()
     submit()
   }
 }
+
+function onDragEnter(ev: DragEvent): void {
+  if (!ev.dataTransfer?.types.includes('Files')) return
+  ev.preventDefault()
+  dragDepth++
+  dragging.value = true
+}
+
+function onDragOver(ev: DragEvent): void {
+  if (!ev.dataTransfer?.types.includes('Files')) return
+  ev.preventDefault()
+  ev.dataTransfer.dropEffect = 'copy'
+  dragging.value = true
+}
+
+function onDragLeave(ev: DragEvent): void {
+  ev.preventDefault()
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dragging.value = false
+}
+
+function onDrop(ev: DragEvent): void {
+  ev.preventDefault()
+  dragDepth = 0
+  dragging.value = false
+  const files = [...(ev.dataTransfer?.files ?? [])].filter((f) => f.size > 0)
+  if (!files.length) return
+  emit(
+    'send-files',
+    files.map((f) => ({ blob: f, name: f.name })),
+  )
+  area.value?.focus()
+}
+
+function onDoc(ev: MouseEvent | TouchEvent): void {
+  if (!menuOpen.value) return
+  const target = ev.target as HTMLElement | null
+  if (target?.closest('.attach-wrap')) return
+  menuOpen.value = false
+}
+
+function onWindowKey(ev: KeyboardEvent): void {
+  if (ev.key === 'Escape' && menuOpen.value) {
+    menuOpen.value = false
+    area.value?.focus()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onDoc)
+  document.addEventListener('touchstart', onDoc, { passive: true })
+  window.addEventListener('keydown', onWindowKey)
+  void nextTick(resize)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDoc)
+  document.removeEventListener('touchstart', onDoc)
+  window.removeEventListener('keydown', onWindowKey)
+})
 </script>
 
 <template>
-  <div class="composer">
+  <div
+    ref="wrap"
+    class="composer"
+    :class="{ dragging }"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <input ref="fileInput" type="file" multiple hidden @change="onFiles" />
     <input
       ref="imageInput"
@@ -59,61 +158,265 @@ function onKeydown(ev: KeyboardEvent): void {
       hidden
       @change="onFiles"
     />
-    <div class="tools">
-      <button class="icon-btn" title="发送文件" @click="pickFiles('file')">
-        <Icon name="paperclip" :size="18" />
-      </button>
-      <button class="icon-btn" title="发送图片/视频" @click="pickFiles('image')">
-        <Icon name="image" :size="18" />
+
+    <div class="bar">
+      <div class="attach-wrap">
+        <button
+          type="button"
+          class="icon-btn attach-btn"
+          :class="{ 'is-active': menuOpen }"
+          title="添加附件"
+          aria-label="添加附件"
+          aria-haspopup="menu"
+          :aria-expanded="menuOpen"
+          @click="toggleMenu"
+        >
+          <Icon name="paperclip" :size="20" />
+        </button>
+        <Transition name="pop">
+          <div v-if="menuOpen" class="popover" role="menu" aria-label="选择附件类型">
+            <button type="button" role="menuitem" @click="pickFiles('image')">
+              <span class="popover-icon"><Icon name="image" :size="18" /></span>
+              <span class="popover-text">
+                <span class="popover-title">图片 / 视频</span>
+                <span class="popover-hint">从本地选择</span>
+              </span>
+            </button>
+            <button type="button" role="menuitem" @click="pickFiles('file')">
+              <span class="popover-icon"><Icon name="file" :size="18" /></span>
+              <span class="popover-text">
+                <span class="popover-title">文件</span>
+                <span class="popover-hint">任意格式</span>
+              </span>
+            </button>
+          </div>
+        </Transition>
+      </div>
+
+      <textarea
+        ref="area"
+        v-model="text"
+        class="input"
+        rows="1"
+        :placeholder="props.placeholder"
+        enterkeyhint="send"
+        @input="resize"
+        @keydown="onKeydown"
+      />
+
+      <button
+        type="button"
+        class="send"
+        :class="{ filled: canSend }"
+        :disabled="!canSend"
+        title="发送（Enter）"
+        aria-label="发送"
+        @click="submit"
+      >
+        <Icon name="send" :size="18" />
       </button>
     </div>
-    <textarea
-      ref="area"
-      v-model="text"
-      class="input"
-      rows="1"
-      placeholder="发送消息"
-      @input="resize"
-      @keydown="onKeydown"
-    />
-    <button class="btn btn-primary send" :disabled="!text.trim()" @click="submit">发送</button>
+
+    <div v-if="dragging" class="drag-overlay" aria-hidden="true">
+      <span class="drag-tip">松开以发送文件</span>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .composer {
+  position: relative;
+  flex: none;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+}
+.bar {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
-  padding: 10px 12px 12px;
-  background: var(--bg-sidebar);
-  border-top: 1px solid var(--border-soft);
+  gap: var(--s-2);
+  width: 100%;
+  max-width: 980px;
+  min-height: 68px;
+  margin: 0 auto;
+  padding: var(--s-3) var(--s-4);
 }
-.tools {
+
+/* ---------- 附件按钮 + Popover ---------- */
+.attach-wrap {
+  position: relative;
+  flex: none;
+}
+.attach-btn {
+  width: var(--s-10);
+  height: var(--s-10);
+  border-radius: var(--r-sm);
+}
+.popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + var(--s-2));
+  z-index: 30;
+  width: 208px;
+  padding: var(--s-1);
   display: flex;
-  gap: 1px;
-  padding-bottom: 2px;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  transform-origin: bottom left;
 }
+.popover button {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  text-align: left;
+  color: var(--text);
+  transition: background var(--dur-fast) var(--ease);
+}
+.popover button:hover,
+.popover button:focus-visible {
+  background: var(--bg-hover);
+}
+.popover-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.popover-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.popover-title {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  line-height: var(--lh-base);
+}
+.popover-hint {
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+}
+.pop-enter-active,
+.pop-leave-active {
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+}
+
+/* ---------- 文本域 ---------- */
 .input {
-  flex: 1;
-  resize: none;
-  background: var(--bg-input);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 120px;
+  padding: var(--s-2) var(--s-3);
   border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  font-size: 14px;
-  line-height: 1.5;
-  max-height: 140px;
-  min-height: 36px;
+  border-radius: var(--r-lg);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  resize: none;
   outline: none;
+  overflow-y: hidden;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.input::placeholder {
+  color: var(--text-faint);
 }
 .input:focus {
-  border-color: var(--border);
-  background: var(--bg-raised);
+  border-color: var(--accent-border);
+  background: var(--bg-elev);
+  box-shadow: var(--focus-ring);
 }
+
+/* ---------- 发送 ---------- */
 .send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-10);
+  height: var(--s-10);
   flex: none;
-  height: 36px;
-  padding: 0 14px;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+.send.filled {
+  background: var(--accent-solid);
+  color: var(--accent-contrast);
+}
+.send.filled:hover {
+  background: var(--accent-hover);
+}
+.send.filled:active {
+  background: var(--accent-active);
+  transform: translateY(0.5px);
+}
+.send:disabled {
+  cursor: default;
+}
+
+/* ---------- 拖拽高亮 ---------- */
+.drag-overlay {
+  position: absolute;
+  inset: var(--s-1);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent-border);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: none;
+}
+.drag-tip {
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-full);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2);
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: var(--lh-base);
+}
+
+/* ---------- 手机 ---------- */
+/* 底部安全区由外壳（mobile App 的 composer-wrap）负责，组件内不再叠加，避免双重留白 */
+@media (max-width: 719px), (pointer: coarse) {
+  .bar {
+    min-height: 60px;
+    gap: var(--s-1);
+    padding: var(--s-2) var(--s-3);
+  }
+  .attach-btn,
+  .send {
+    width: var(--touch);
+    height: var(--touch);
+  }
+  .input {
+    min-height: var(--touch);
+    padding: var(--s-2) var(--s-3);
+  }
 }
 </style>

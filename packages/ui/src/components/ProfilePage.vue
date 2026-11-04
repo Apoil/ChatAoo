@@ -1,18 +1,26 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { APP_VERSION_LABEL, type Profile } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
+import { useTheme, type ThemeMode } from '../theme'
 import Avatar from './Avatar.vue'
 import AvatarCropper from './AvatarCropper.vue'
 import Icon from './Icon.vue'
 
 /**
- * 个人主页：默认展示自己（可点头像换头像、改昵称、退出登录）；
+ * 个人主页：默认展示自己（可点头像换头像、改昵称、切换主题、退出登录）；
  * 传入 peerId 时展示对方资料（只读）。
  */
 const props = defineProps<{ peerId?: string; showBack?: boolean }>()
 const emit = defineEmits<{ close: []; openChat: [peerId: string] }>()
 const store = useChatStore()
+const { mode, setMode } = useTheme()
+
+const THEME_OPTIONS: { value: ThemeMode; label: string; icon: 'sun' | 'moon' | 'monitor' }[] = [
+  { value: 'light', label: '浅色', icon: 'sun' },
+  { value: 'dark', label: '深色', icon: 'moon' },
+  { value: 'system', label: '跟随系统', icon: 'monitor' },
+]
 
 const isSelf = computed(() => !props.peerId || props.peerId === store.session?.me.userId)
 const profile = computed<Profile | null>(() => {
@@ -29,6 +37,13 @@ const profile = computed<Profile | null>(() => {
   }
   return store.profileOf(props.peerId!) ?? null
 })
+
+const uid = computed(() => (isSelf.value ? store.session?.me.userId : props.peerId) ?? '')
+const displayName = computed(() => profile.value?.displayName ?? '未知用户')
+const username = computed(() => (isSelf.value ? store.session?.username : undefined))
+const serverUrl = computed(() => store.session?.serverUrl ?? '')
+const connectionLabel = computed(() => (store.online ? '服务器在线' : '离线 · 局域网'))
+const peerOnline = computed(() => (props.peerId ? store.isPeerOnline(props.peerId) : false))
 
 const cropping = ref(false)
 const cropSrc = ref('')
@@ -92,15 +107,17 @@ async function saveName(): Promise<void> {
   }
 }
 
-const copied = ref(false)
-async function copyId(): Promise<void> {
-  const s = store.session
-  const id = isSelf.value ? s?.me.userId : props.peerId
-  if (!id) return
+type CopyField = 'id' | 'server'
+const copiedField = ref<CopyField | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+
+async function copyField(field: CopyField, value: string): Promise<void> {
+  if (!value) return
   try {
-    await navigator.clipboard.writeText(id)
-    copied.value = true
-    setTimeout(() => (copied.value = false), 1500)
+    await navigator.clipboard.writeText(value)
+    copiedField.value = field
+    if (copiedTimer) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copiedField.value = null), 1500)
   } catch {
     /* ignore */
   }
@@ -112,91 +129,198 @@ async function logout(): Promise<void> {
   emit('close')
 }
 
-const peerOnline = computed(() => (props.peerId ? store.isPeerOnline(props.peerId) : false))
-const username = computed(() => (isSelf.value ? store.session?.username : undefined))
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer)
+})
 </script>
 
 <template>
   <div class="page">
     <header v-if="showBack !== false || !isSelf" class="head">
-      <button class="icon-btn" @click="emit('close')">
+      <button class="icon-btn" type="button" aria-label="返回" @click="emit('close')">
         <Icon name="back" :size="20" />
       </button>
       <span class="title">{{ isSelf ? '我' : '资料' }}</span>
     </header>
 
-    <div class="body">
-      <div class="avatar-wrap" :class="{ editable: isSelf }" @click="isSelf && avatarInput?.click()">
-        <Avatar :profile="profile" :size="88" :online="isSelf ? undefined : peerOnline" />
-        <span v-if="isSelf" class="edit-tip">更换头像</span>
-        <input
-          v-if="isSelf"
-          ref="avatarInput"
-          class="avatar-file"
-          type="file"
-          accept="image/*"
-          hidden
-          @change="pickAvatar"
-        />
-      </div>
-      <p v-if="avatarError" class="avatar-error">{{ avatarError }}</p>
-
-      <div class="name-row">
-        <template v-if="isSelf && editingName">
-          <input
-            ref="nameInput"
-            v-model="nameDraft"
-            class="name-input"
-            maxlength="30"
-            placeholder="昵称"
-            @keydown.enter="saveName"
-          />
-          <button class="btn btn-primary sm" :disabled="nameSaving" @click="saveName">保存</button>
-          <button class="btn btn-ghost sm" @click="editingName = false">取消</button>
-        </template>
-        <template v-else>
-          <h2 class="name">{{ profile?.displayName ?? '未知用户' }}</h2>
-          <button v-if="isSelf" class="icon-btn" title="修改昵称" @click.stop="startEditName">
-            <Icon name="edit" :size="16" />
+    <div class="scroll">
+      <div class="body">
+        <section class="hero">
+          <button
+            v-if="isSelf"
+            class="avatar-btn"
+            type="button"
+            title="更换头像"
+            aria-label="更换头像"
+            @click="avatarInput?.click()"
+          >
+            <Avatar :profile="profile" size="var(--avatar-lg)" />
+            <span class="avatar-edit" aria-hidden="true"><Icon name="image" :size="14" /></span>
           </button>
-        </template>
-      </div>
-      <p v-if="nameError" class="avatar-error">{{ nameError }}</p>
+          <Avatar v-else :profile="profile" size="var(--avatar-lg)" :online="peerOnline" />
+          <input
+            v-if="isSelf"
+            ref="avatarInput"
+            class="avatar-file"
+            type="file"
+            accept="image/*"
+            hidden
+            @change="pickAvatar"
+          />
 
-      <p v-if="username" class="uname">@{{ username }} · 用户名不可改</p>
-      <p v-else-if="peerOnline" class="uname on">在线</p>
+          <div class="hero-info">
+            <template v-if="isSelf && editingName">
+              <div class="name-edit">
+                <input
+                  ref="nameInput"
+                  v-model="nameDraft"
+                  class="name-input"
+                  maxlength="30"
+                  placeholder="昵称"
+                  @keydown.enter="saveName"
+                  @keydown.esc="editingName = false"
+                />
+                <button class="btn btn-primary" type="button" :disabled="nameSaving" @click="saveName">
+                  {{ nameSaving ? '保存中…' : '保存' }}
+                </button>
+                <button class="btn btn-ghost" type="button" @click="editingName = false">取消</button>
+              </div>
+            </template>
+            <div v-else class="name-line">
+              <h2 class="name" :title="displayName">{{ displayName }}</h2>
+              <button
+                v-if="isSelf"
+                class="icon-btn name-edit-btn"
+                type="button"
+                title="修改昵称"
+                aria-label="修改昵称"
+                @click.stop="startEditName"
+              >
+                <Icon name="edit" :size="16" />
+              </button>
+            </div>
 
-      <dl class="meta">
-        <div class="meta-row">
-          <dt>用户 ID</dt>
-          <dd>
-            <code>{{ isSelf ? store.session?.me.userId : peerId }}</code>
-            <button class="icon-btn" :title="copied ? '已复制' : '复制'" @click="copyId">
-              <Icon :name="copied ? 'check' : 'copy'" :size="15" />
+            <div class="meta-line">
+              <span v-if="username" class="pill">@{{ username }}</span>
+              <span v-else-if="!isSelf" class="pill" :class="{ 'pill-success': peerOnline }">
+                {{ peerOnline ? '在线' : '离线' }}
+              </span>
+              <span v-if="profile?.statusText" class="status-text truncate" :title="profile?.statusText">
+                {{ profile?.statusText }}
+              </span>
+            </div>
+
+            <button
+              v-if="uid"
+              class="id-chip"
+              type="button"
+              :title="copiedField === 'id' ? '已复制' : `复制用户 ID：${uid}`"
+              @click="copyField('id', uid)"
+            >
+              <span class="id-label">ID</span>
+              <code class="id-value mono">{{ uid }}</code>
+              <Icon :name="copiedField === 'id' ? 'check' : 'copy'" :size="14" />
             </button>
-          </dd>
-        </div>
-        <div v-if="isSelf" class="meta-row">
-          <dt>连接</dt>
-          <dd>{{ store.online ? '服务器在线' : '离线 · 局域网' }}</dd>
-        </div>
-        <div v-if="isSelf" class="meta-row">
-          <dt>版本</dt>
-          <dd>{{ APP_VERSION_LABEL }}</dd>
-        </div>
-      </dl>
+          </div>
+        </section>
 
-      <div v-if="!isSelf" class="actions">
-        <button class="btn btn-primary" @click="emit('openChat', props.peerId!)">发消息</button>
-      </div>
+        <p v-if="avatarError" class="error" role="alert">{{ avatarError }}</p>
+        <p v-if="nameError" class="error" role="alert">{{ nameError }}</p>
 
-      <div v-if="isSelf" class="logout-area">
-        <template v-if="confirmingLogout">
-          <p class="logout-hint">退出后需联网重新登录，本机消息会留下。</p>
-          <button class="btn btn-danger" @click="logout">确认退出</button>
-          <button class="btn btn-ghost" @click="confirmingLogout = false">取消</button>
+        <template v-if="isSelf">
+          <section class="card">
+            <h3 class="card-title">账号信息</h3>
+            <dl class="rows">
+              <div class="row">
+                <dt>用户名</dt>
+                <dd>{{ username ? `@${username}` : '—' }}</dd>
+              </div>
+              <div class="row">
+                <dt>连接状态</dt>
+                <dd class="row-inline">
+                  <span class="status-dot" :class="{ on: store.online }" aria-hidden="true" />
+                  {{ connectionLabel }}
+                </dd>
+              </div>
+              <div class="row">
+                <dt>版本</dt>
+                <dd>{{ APP_VERSION_LABEL }}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title">主题</h3>
+            <div class="seg" role="group" aria-label="主题模式">
+              <button
+                v-for="opt in THEME_OPTIONS"
+                :key="opt.value"
+                class="seg-btn"
+                type="button"
+                :class="{ on: mode === opt.value }"
+                :aria-pressed="mode === opt.value"
+                @click="setMode(opt.value)"
+              >
+                <Icon :name="opt.icon" :size="16" />
+                <span>{{ opt.label }}</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title">服务器地址</h3>
+            <div class="server-row">
+              <code class="server-value mono">{{ serverUrl || '—' }}</code>
+              <button
+                class="icon-btn"
+                type="button"
+                :disabled="!serverUrl"
+                :title="copiedField === 'server' ? '已复制' : '复制服务器地址'"
+                :aria-label="copiedField === 'server' ? '已复制' : '复制服务器地址'"
+                @click="copyField('server', serverUrl)"
+              >
+                <Icon :name="copiedField === 'server' ? 'check' : 'copy'" :size="16" />
+              </button>
+            </div>
+          </section>
+
+          <section class="card danger-card">
+            <template v-if="confirmingLogout">
+              <p class="logout-hint">退出后需联网重新登录，本机消息会保留。</p>
+              <div class="logout-actions">
+                <button class="btn btn-ghost" type="button" @click="confirmingLogout = false">取消</button>
+                <button class="btn btn-danger" type="button" @click="logout">确认退出</button>
+              </div>
+            </template>
+            <button v-else class="logout-btn" type="button" @click="confirmingLogout = true">
+              <Icon name="logout" :size="18" />
+              <span>退出登录</span>
+            </button>
+          </section>
         </template>
-        <button v-else class="btn btn-danger" @click="confirmingLogout = true">退出登录</button>
+
+        <template v-else>
+          <section class="card">
+            <h3 class="card-title">资料</h3>
+            <dl class="rows">
+              <div class="row">
+                <dt>用户 ID</dt>
+                <dd class="mono break">{{ uid }}</dd>
+              </div>
+              <div class="row">
+                <dt>状态</dt>
+                <dd>{{ peerOnline ? '在线' : '离线' }}</dd>
+              </div>
+              <div v-if="profile?.statusText" class="row">
+                <dt>个性签名</dt>
+                <dd>{{ profile?.statusText }}</dd>
+              </div>
+            </dl>
+            <button class="btn btn-primary btn-block open-chat" type="button" @click="emit('openChat', props.peerId!)">
+              发消息
+            </button>
+          </section>
+        </template>
       </div>
     </div>
 
@@ -209,134 +333,337 @@ const username = computed(() => (isSelf.value ? store.session?.username : undefi
   height: 100%;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  background: var(--bg-sidebar);
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text);
+}
+/* button/input 不继承 body 行高，中文文案统一按 1.5 行高 */
+.page button,
+.page input {
+  line-height: var(--lh-base);
 }
 .head {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 10px;
-  flex: none;
+  gap: var(--s-1);
+  padding: calc(var(--s-1) + env(safe-area-inset-top, 0px)) var(--s-2) var(--s-1);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
 }
 .title {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
+  line-height: var(--lh-tight);
+}
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .body {
-  padding: 20px 22px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-5) var(--s-4) var(--s-8);
+}
+.hero {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+.avatar-btn {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border-radius: var(--r-full);
+  line-height: 0;
+}
+.avatar-btn:focus-visible {
+  border-radius: var(--r-full);
+}
+.avatar-edit {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: var(--s-6);
+  height: var(--s-6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-full);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  box-shadow: var(--shadow-1);
+  transition: background var(--dur-fast) var(--ease);
+}
+.avatar-btn:hover .avatar-edit {
+  background: var(--accent-soft);
+}
+.hero-info {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  gap: var(--s-1);
 }
-.avatar-wrap {
-  position: relative;
-  margin-bottom: 8px;
-  width: fit-content;
-}
-.avatar-wrap.editable {
-  cursor: pointer;
-}
-.edit-tip {
-  display: block;
-  margin-top: 8px;
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-.avatar-error {
-  color: var(--danger);
-  font-size: 12.5px;
-  margin: 8px 0 0;
-}
-.name-row {
+.name-line {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-  width: 100%;
+  gap: var(--s-1);
+  max-width: 100%;
 }
 .name {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
 }
-.name-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--bg-raised);
-  border: 1px solid var(--accent-border);
-  border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  font-size: 16px;
-  outline: none;
-  user-select: text;
-  -webkit-user-select: text;
-  -webkit-app-region: no-drag;
-}
-.name-row .btn.sm {
+.name-edit-btn {
   flex: none;
-  white-space: nowrap;
+  width: var(--s-8);
+  height: var(--s-8);
 }
-.uname {
-  margin: 4px 0 0;
-  color: var(--text-dim);
-  font-size: 13px;
-}
-.uname.on {
-  color: var(--ok);
-}
-.meta {
+.name-edit {
   width: 100%;
-  margin: 22px 0 0;
-  display: flex;
-  flex-direction: column;
-}
-.meta-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 0;
-  border-top: 1px solid var(--border-soft);
-  font-size: 13px;
-}
-.meta-row dt {
-  width: 64px;
-  flex: none;
-  color: var(--text-faint);
-}
-.meta-row dd {
-  margin: 0;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-.meta-row code {
-  flex: 1;
-  font-size: 12px;
-  color: var(--text-dim);
-  word-break: break-all;
-}
-.btn.sm {
-  padding: 5px 12px;
-  font-size: 12px;
-}
-.actions {
-  margin-top: 20px;
-}
-.logout-area {
-  margin-top: 28px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
+}
+.name-input {
+  flex: 1 1 8em;
+  min-width: 0;
+  min-height: var(--touch);
+  padding: 0 var(--s-3);
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  outline: none;
+}
+.name-edit .btn {
+  flex: none;
+}
+.meta-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  max-width: 100%;
+}
+.meta-line .pill {
+  line-height: var(--lh-base);
+}
+.status-text {
+  max-width: 100%;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.id-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  max-width: 100%;
+  min-height: var(--s-8);
+  padding: calc(var(--s-1) / 2) var(--s-2);
+  background: var(--bg-input);
+  border-radius: var(--r-full);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.id-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.id-label {
+  flex: none;
+  font-weight: 600;
+}
+.id-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+.card {
+  padding: var(--s-4);
+}
+.card-title {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+}
+.rows {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.row {
+  display: grid;
+  grid-template-columns: 4.5em minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--s-10);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+}
+.row:first-child {
+  border-top: 0;
+}
+.row dt {
+  color: var(--text-muted);
+}
+.row dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.row-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.status-dot {
+  width: var(--s-2);
+  height: var(--s-2);
+  flex: none;
+  border-radius: var(--r-full);
+  background: var(--text-faint);
+}
+.status-dot.on {
+  background: var(--success);
+}
+.break {
+  word-break: break-all;
+}
+.seg {
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-1);
+  background: var(--bg-input);
+  border-radius: var(--r-sm);
+}
+.seg-btn {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--s-8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-1);
+  padding: 0 var(--s-1);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.seg-btn.on {
+  background: var(--bg-panel);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+.seg-btn:hover:not(.on) {
+  color: var(--text);
+}
+.seg-btn:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.server-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.server-row .icon-btn {
+  flex: none;
+}
+.server-value {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.danger-card {
+  padding: var(--s-3);
+}
+.logout-btn {
+  width: 100%;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  border-radius: var(--r-sm);
+  color: var(--danger);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  transition: background var(--dur-fast) var(--ease);
+}
+.logout-btn:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 .logout-hint {
-  margin: 0;
-  width: 100%;
-  color: var(--text-faint);
-  font-size: 12.5px;
+  margin: 0 0 var(--s-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+}
+.logout-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+.logout-actions .btn {
+  flex: 1;
+  min-height: var(--touch);
+}
+.open-chat {
+  margin-top: var(--s-3);
+  min-height: var(--touch);
+}
+@media (max-width: 719.98px) {
+  .body {
+    gap: var(--s-3);
+    padding: var(--s-4) var(--s-4) var(--s-8);
+  }
+  .icon-btn {
+    width: var(--touch);
+    height: var(--touch);
+  }
+  .name-edit-btn {
+    width: var(--touch);
+    height: var(--touch);
+  }
+  .seg-btn {
+    min-height: var(--touch);
+  }
+  .id-chip {
+    min-height: var(--touch);
+  }
+  .name-edit .btn {
+    min-height: var(--touch);
+  }
 }
 </style>

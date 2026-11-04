@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * 会话列表项：68px 行（手机 72px），44px 头像 + 在线点，
+ * 两行信息（名称/摘要），右侧时间与未读徽标。
+ * 契约不变：只接收 conversation，点击由外壳通过 @click 透传到根元素。
+ */
+import { computed } from 'vue'
 import type { Conversation, Profile } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
 import Avatar from './Avatar.vue'
@@ -6,7 +12,14 @@ import Avatar from './Avatar.vue'
 const props = defineProps<{ conversation: Conversation }>()
 const store = useChatStore()
 
-const profile = (): Profile | undefined => store.profileOf(store.peerOf(props.conversation.id) ?? '')
+const peerId = computed(() => store.peerOf(props.conversation.id) ?? '')
+const profile = computed<Profile | undefined>(() => store.profileOf(peerId.value))
+const online = computed(() => store.isPeerOnline(peerId.value))
+const active = computed(() => store.activeConversationId === props.conversation.id)
+const displayName = computed(() => profile.value?.displayName || peerId.value.slice(0, 10) || '未知用户')
+const preview = computed(() => props.conversation.lastMessagePreview || '暂无消息')
+const unread = computed(() => props.conversation.unreadCount ?? 0)
+const unreadLabel = computed(() => (unread.value > 99 ? '99+' : String(unread.value)))
 
 function timeLabel(ts: number): string {
   const d = new Date(ts)
@@ -19,79 +32,113 @@ function timeLabel(ts: number): string {
 </script>
 
 <template>
-  <div class="item" :class="{ active: store.activeConversationId === conversation.id }">
-    <Avatar :profile="profile()" :online="store.isPeerOnline(store.peerOf(conversation.id) ?? '')" />
-    <div class="body">
-      <div class="row">
-        <span class="name">{{ profile()?.displayName ?? store.peerOf(conversation.id)?.slice(0, 10) }}</span>
-        <span class="time">{{ timeLabel(conversation.lastMessageAt) }}</span>
-      </div>
-      <div class="row">
-        <span class="preview">{{ conversation.lastMessagePreview || '暂无消息' }}</span>
-        <span v-if="conversation.unreadCount > 0" class="badge">{{ conversation.unreadCount }}</span>
-      </div>
-    </div>
-  </div>
+  <button
+    type="button"
+    class="conv-item"
+    :class="{ 'is-active': active }"
+    :aria-current="active ? 'true' : undefined"
+  >
+    <Avatar :profile="profile" :size="44" :online="online" />
+    <span class="conv-body">
+      <span class="conv-line">
+        <span class="conv-name">{{ displayName }}</span>
+        <span class="conv-time">{{ timeLabel(conversation.lastMessageAt) }}</span>
+      </span>
+      <span class="conv-line">
+        <span class="conv-preview">{{ preview }}</span>
+        <span v-if="unread > 0" class="conv-badge" :aria-label="`${unread} 条未读`">{{ unreadLabel }}</span>
+      </span>
+    </span>
+  </button>
 </template>
 
 <style scoped>
-.item {
+.conv-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 11px 16px;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: 68px;
+  padding: 0 var(--s-4);
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
 }
-.item:hover {
+.conv-item:hover {
   background: var(--bg-hover);
 }
-.item.active {
+.conv-item:active,
+.conv-item.is-active {
   background: var(--bg-active);
 }
-.body {
+.conv-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--s-1);
 }
-.row {
+.conv-line {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--s-2);
+  min-width: 0;
 }
-.name {
-  font-weight: 600;
-  font-size: 14px;
-  white-space: nowrap;
+.conv-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: var(--lh-base);
+  color: var(--text);
 }
-.time {
-  font-size: 11px;
+.conv-time {
+  flex: none;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
   color: var(--text-faint);
-  flex: none;
+  font-variant-numeric: tabular-nums;
 }
-.preview {
-  font-size: 12.5px;
-  color: var(--text-dim);
-  white-space: nowrap;
+.conv-preview {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: var(--lh-base);
+  color: var(--text-muted);
 }
-.badge {
+.conv-badge {
   flex: none;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 11px;
-  font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--s-1);
+  border-radius: var(--r-full);
+  background: var(--accent-solid);
+  color: var(--accent-contrast);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 手机（<720dp）：列表行 72px，触控目标 ≥ 44px */
+@media (max-width: 719px) {
+  .conv-item {
+    min-height: 72px;
+  }
 }
 </style>

@@ -40,7 +40,18 @@ function initCropper(): void {
   }
 }
 
+function reset(): void {
+  if (!cropper || !ready.value) return
+  cropper.reset()
+  error.value = ''
+}
+
+function onKeydown(ev: KeyboardEvent): void {
+  if (ev.key === 'Escape') emit('close')
+}
+
 onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
   const el = imgEl.value
   if (!el) return
   if (el.complete && el.naturalWidth > 0) {
@@ -89,23 +100,32 @@ async function confirm(): Promise<void> {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
   cropper?.destroy()
   cropper = null
 })
 </script>
 
 <template>
-  <div class="avatar-crop-modal" @click.self="emit('close')">
+  <div
+    class="avatar-crop-modal"
+    role="dialog"
+    aria-modal="true"
+    :aria-label="title ?? '裁剪图片'"
+    @click.self="emit('close')"
+  >
     <div class="avatar-crop-card">
       <h3>{{ title ?? '裁剪图片' }}</h3>
       <div class="img-box">
         <img ref="imgEl" :src="src" alt="" draggable="false" />
       </div>
-      <p v-if="error" class="error">{{ error }}</p>
+      <p v-if="error" class="error" role="alert">{{ error }}</p>
       <div class="actions">
-        <button class="btn btn-ghost" @click="emit('close')">取消</button>
-        <button class="btn btn-primary" :disabled="busy || !ready" @click="confirm">
-          {{ busy ? '处理中…' : '确定' }}
+        <button class="btn btn-subtle" type="button" :disabled="!ready" @click="reset">重置</button>
+        <span class="spacer" />
+        <button class="btn btn-ghost" type="button" @click="emit('close')">取消</button>
+        <button class="btn btn-primary" type="button" :disabled="busy || !ready" @click="confirm">
+          {{ busy ? '保存中…' : '保存' }}
         </button>
       </div>
     </div>
@@ -113,36 +133,55 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 复用全局 .avatar-crop-modal / .avatar-crop-card，仅按 §4 收紧裁剪卡尺寸 */
+.avatar-crop-card {
+  max-width: var(--dialog-w);
+}
+/* button 不继承 body 行高，中文文案统一按 1.5 行高 */
+.avatar-crop-card button {
+  line-height: var(--lh-base);
+}
 h3 {
-  margin: 0 0 12px;
-  font-size: 15px;
+  margin: 0 0 var(--s-3);
+  font-size: var(--fs-md);
   font-weight: 600;
+  line-height: var(--lh-tight);
 }
 .img-box {
-  max-height: 420px;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  /* cropper 需要容器有确定尺寸，避免图片未加载完成时塌陷 */
-  min-height: 200px;
+  /* 320×320 裁剪视窗，窄屏时等比缩小 */
+  width: min(var(--crop-size), 100%);
+  aspect-ratio: 1;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .img-box img {
   max-width: 100%;
-  max-height: 420px;
+  max-height: 100%;
   display: block;
 }
 .error {
   color: var(--danger);
-  font-size: 12.5px;
-  margin: 10px 0 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  margin: var(--s-2) 0 0;
 }
 .actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 14px;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+.spacer {
+  flex: 1;
+}
+@media (max-width: 719.98px) {
+  .actions {
+    flex-wrap: wrap;
+  }
+  .actions .btn {
+    min-height: var(--touch);
+  }
 }
 </style>

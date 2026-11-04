@@ -1,7 +1,11 @@
 /**
  * Electron 主进程：窗口、媒体缓存协议（chataoo-media://）、LAN、IPC。
+ *
+ * 主题注意：本文件下方的 CHROME 常量复制了 @chataoo/ui 的 THEME_CHROME
+ * （主进程无法导入 ui 包）。改 THEME_CHROME 时必须同步改这里的 CHROME，
+ * 否则标题栏覆盖层 / 窗口底色会和渲染进程主题不一致。
  */
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell, } from 'electron';
 import { createHash } from 'node:crypto';
 import { closeSync, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync, } from 'node:fs';
 import { join } from 'node:path';
@@ -33,6 +37,20 @@ app.disableHardwareAcceleration();
 let mediaDir = '';
 let lan = null;
 let win = null;
+/** 自定义标题栏高度（与 theme.css 的 --titlebar-h 一致） */
+const TITLEBAR_H = 44;
+/** 十六进制颜色白名单，避免渲染进程传入非法值 */
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+/**
+ * 标题栏覆盖层 / 窗口背景的启动默认值。
+ * 与 @chataoo/ui 的 THEME_CHROME 保持一致（主进程无法导入 ui 包）；
+ * 改 THEME_CHROME 必须同步改这里（见文件顶部说明）。
+ * 渲染进程挂载后会通过 win:set-theme 按用户实际主题再次校正。
+ */
+const CHROME = {
+    light: { color: '#f2f5fa', symbolColor: '#101828' },
+    dark: { color: '#0c1017', symbolColor: '#e9eef8' },
+};
 /* 窗口尺寸：登录时小窗，登录后放大为聊天窗口 */
 const LOGIN_W = 440;
 const LOGIN_H = 640;
@@ -138,21 +156,23 @@ function createWindow() {
         join(app.getAppPath(), 'assets', 'icons', 'icon.ico'),
     ];
     const iconPath = iconCandidates.find((p) => existsSync(p));
+    // 启动时按系统主题选默认色，避免深色系统下出现白底闪烁；渲染进程随后会校正为用户选择
+    const chrome = nativeTheme.shouldUseDarkColors ? CHROME.dark : CHROME.light;
     win = new BrowserWindow({
         width: LOGIN_W,
         height: LOGIN_H,
         minWidth: LOGIN_MIN_W,
         minHeight: LOGIN_MIN_H,
         title: 'ChatAoo',
-        backgroundColor: '#f3eee6',
+        backgroundColor: chrome.color,
         icon: iconPath,
         autoHideMenuBar: true,
         // 无边框 + 系统标题栏按钮覆盖层（颜色与主题一致）
         titleBarStyle: 'hidden',
         titleBarOverlay: {
-            color: '#faf7f2',
-            symbolColor: '#6a645a',
-            height: 44,
+            color: chrome.color,
+            symbolColor: chrome.symbolColor,
+            height: TITLEBAR_H,
         },
         webPreferences: {
             preload: join(app.getAppPath(), 'dist-electron', 'preload.cjs'),
@@ -290,6 +310,27 @@ ipcMain.handle('app:saveFile', async (_e, name, url) => {
     return 'saved';
 });
 ipcMain.handle('win:resize', (_e, mode) => resizeWindow(mode));
+/**
+ * 主题联动：渲染进程把 THEME_CHROME[resolved] 传进来，主进程同步
+ *  - 标题栏覆盖层（Windows/Linux 系统按钮区）
+ *  - 窗口背景色（透明/重绘时的兜底色）
+ */
+ipcMain.handle('win:set-theme', (_e, opts) => {
+    if (!win)
+        return;
+    if (!opts || typeof opts !== 'object')
+        return;
+    const { color, symbolColor } = opts;
+    if (typeof color !== 'string' || !HEX_COLOR.test(color))
+        return;
+    if (typeof symbolColor !== 'string' || !HEX_COLOR.test(symbolColor))
+        return;
+    // 标题栏覆盖层仅 Windows/Linux 提供；其他平台只同步窗口背景色
+    if (typeof win.setTitleBarOverlay === 'function') {
+        win.setTitleBarOverlay({ color, symbolColor, height: TITLEBAR_H });
+    }
+    win.setBackgroundColor(color);
+});
 /* ---------------- 启动 ---------------- */
 void app.whenReady().then(() => {
     // 生产模式：app://bundle/ 映射到 dist 目录

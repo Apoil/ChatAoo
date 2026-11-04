@@ -37,6 +37,8 @@ export interface ChataooBridge {
   }
   win: {
     resize(mode: 'login' | 'chat'): Promise<void>
+    /** 同步原生标题栏覆盖层与窗口背景色（颜色取自 @chataoo/ui 的 THEME_CHROME） */
+    setThemeOverlay(chrome: { color: string; symbolColor: string }): Promise<void>
   }
 }
 

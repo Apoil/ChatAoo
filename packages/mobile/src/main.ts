@@ -1,11 +1,15 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { ChatSession } from '@chataoo/app-core'
+import { initTheme } from '@chataoo/ui'
 import '@chataoo/ui/theme.css'
 import App from './App.vue'
 import { CapacitorLan, CapacitorMedia, saveFileToDevice } from './bridge'
 
 async function bootstrap(): Promise<void> {
+  // 主题要在首帧前定好，避免深色系统先闪一下白底（同时同步 <meta name="theme-color">）
+  initTheme()
+
   const serverUrl = localStorage.getItem('chataoo:serverUrl') ?? 'http://192.168.1.5:47800'
 
   const platform = {

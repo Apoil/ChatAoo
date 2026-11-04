@@ -58,5 +58,6 @@ contextBridge.exposeInMainWorld('chataoo', {
   },
   win: {
     resize: (mode) => ipcRenderer.invoke('win:resize', mode),
+    setThemeOverlay: (opts) => ipcRenderer.invoke('win:set-theme', opts),
   },
 })

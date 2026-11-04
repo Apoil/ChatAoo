@@ -5,36 +5,40 @@ import { useChatStore } from '../stores/chat'
 
 const props = defineProps<{
   profile: Profile | null | undefined
-  size?: number
+  /** 数字按 px；也接受 CSS 长度（如 var(--avatar-lg)） */
+  size?: number | string
   online?: boolean
 }>()
 
 const store = useChatStore()
 const url = ref<string | null>(null)
-const initial = ref('?')
 
-const TONES = ['#8f5b3d', '#5f6b4e', '#6a4e5c', '#4e5d6b', '#7a5e38', '#3f5c56']
+/** 无图占位：中文取首字，英文取首字母大写。 */
+const initial = computed(() => {
+  const name = (props.profile?.displayName || props.profile?.userId || '?').trim()
+  return (Array.from(name)[0] ?? '?').toUpperCase()
+})
 
-const tone = computed(() => {
-  const key = props.profile?.displayName || props.profile?.userId || '?'
-  let h = 0
-  for (let i = 0; i < key.length; i++) h = (h + key.charCodeAt(i) * (i + 1)) % 997
-  return TONES[h % TONES.length]
+const sizeValue = computed(() => {
+  const size = props.size
+  if (size === undefined) return 'var(--avatar-sm)'
+  return typeof size === 'number' ? `${size}px` : size
 })
 
 async function resolve(): Promise<void> {
   const p = props.profile
   if (!p) {
     url.value = null
-    initial.value = '?'
     return
   }
-  initial.value = (p.displayName || p.userId || '?').slice(0, 1).toUpperCase()
   url.value = store.session ? await store.session.avatarUrlOf(p) : null
 }
 
 onMounted(resolve)
-watch(() => [props.profile?.avatarHash, props.profile?.avatarUrl, props.profile?.updatedAt, store.mediaTick], resolve)
+watch(
+  () => [props.profile?.avatarHash, props.profile?.avatarUrl, props.profile?.updatedAt, store.mediaTick],
+  resolve,
+)
 
 function onImgError(): void {
   url.value = null
@@ -44,17 +48,12 @@ function onImgError(): void {
 <template>
   <div
     class="avatar"
-    :style="{
-      width: `${size ?? 40}px`,
-      height: `${size ?? 40}px`,
-      fontSize: `${(size ?? 40) * 0.4}px`,
-      background: url ? undefined : tone,
-    }"
-    :class="{ online: online }"
+    :class="{ online }"
+    :style="{ '--avatar-size': sizeValue }"
   >
     <img v-if="url" :src="url" alt="" draggable="false" @error="onImgError" />
     <span v-else class="initial">{{ initial }}</span>
-    <i v-if="online" class="dot" />
+    <i v-if="online" class="dot" aria-hidden="true" />
   </div>
 </template>
 
@@ -62,30 +61,39 @@ function onImgError(): void {
 .avatar {
   position: relative;
   flex: none;
-  border-radius: 28%;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  font-size: calc(var(--avatar-size) * 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  color: #fffaf6;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  user-select: none;
 }
 .avatar img {
   width: 100%;
   height: 100%;
+  display: block;
   object-fit: cover;
+  border-radius: inherit;
 }
 .initial {
   font-weight: 600;
+  line-height: 1;
 }
+/* 在线点：10px + 2px --bg-panel 描边（设计系统 §4 Avatar） */
 .dot {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 26%;
-  height: 26%;
-  border-radius: 50%;
-  background: var(--ok);
-  border: 2px solid var(--bg-sidebar);
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-full);
+  background: var(--success);
+  border: 2px solid var(--bg-panel);
   box-sizing: border-box;
+  pointer-events: none;
 }
 </style>
