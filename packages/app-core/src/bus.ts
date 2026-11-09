@@ -37,6 +37,8 @@ export interface BusEvents {
   online: boolean
   /** 登录状态变化 */
   auth: { authed: boolean }
+  /** 登录态失效（服务器返回 401：token 过期/账号被换绑等），需要重新登录 */
+  'auth-expired': { reason?: string }
   /** 头像等本地媒体缓存完成 */
   'media-cached': { sha256: string }
   /** 头像已更新 */

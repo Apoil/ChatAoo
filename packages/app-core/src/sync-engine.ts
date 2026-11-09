@@ -27,6 +27,11 @@ const PUSH_INTERVAL_MS = 8000
 const PULL_INTERVAL_MS = 30000
 const MAX_ATTEMPTS = 6
 
+/** 服务器返回 401：登录态已失效（需要重新登录，而不是离线） */
+function isUnauthorized(e: unknown): boolean {
+  return !!e && typeof e === 'object' && (e as { status?: number }).status === 401
+}
+
 export interface SyncDeps {
   api: ServerApi
   store: LocalStore
@@ -51,7 +56,7 @@ export class SyncEngine {
 
   /** 数据身份（账号 ID）：多设备同账号时与设备 ID 不同 */
   private get accountId(): string {
-    return this.deps.identity.accountUserId ?? this.accountId
+    return this.deps.identity.accountUserId ?? this.deps.identity.userId
   }
 
   /** 校验已保存的登录状态（有 token 则验证；无 token 保持待登录） */
@@ -74,7 +79,12 @@ export class SyncEngine {
         avatarHash: user.avatarHash,
         updatedAt: Date.now(),
       })
-    } catch {
+    } catch (e) {
+      if (isUnauthorized(e)) {
+        // token 失效（过期 / 账号被换绑 / 服务器重置）：必须回到登录页，不能假装离线
+        this.deps.bus.emit('auth-expired', { reason: '登录已过期，请重新登录' })
+        return
+      }
       // 服务器不可达：保持离线模式，已保存的登录状态仍有效（LAN 可用）
     }
   }
@@ -332,6 +342,10 @@ export class SyncEngine {
       await store.cursorSet('profilesSince', result.serverTime)
       this.deps.bus.emit('conversations', {})
     } catch (e) {
+      if (isUnauthorized(e)) {
+        this.deps.bus.emit('auth-expired', { reason: '登录已过期，请重新登录' })
+        return
+      }
       console.warn('sync pull failed:', e)
     }
   }

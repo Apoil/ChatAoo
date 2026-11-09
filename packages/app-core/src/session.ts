@@ -54,6 +54,8 @@ export class ChatSession {
   serverUrl: string
   username?: string
   online = false
+  /** 最近一次登录态失效原因（登录页提示用；重新登录后清空） */
+  lastAuthError?: string
   activeConversationId?: string
   presence = new Map<string, boolean>()
 
@@ -80,6 +82,8 @@ export class ChatSession {
 
     this.bus.on('online', (v) => (this.online = v))
     this.bus.on('presence', ({ userId, online }) => this.presence.set(userId, online))
+    // 401：token 失效（过期 / 账号被换绑）→ 回到登录页，而不是假装离线
+    this.bus.on('auth-expired', ({ reason }) => void this.handleAuthExpired(reason))
 
     // 有本地身份 + 登录状态 → 直接进入（在线校验失败则自动进入离线模式）
     if (this.identity && this.token) {
@@ -171,6 +175,12 @@ export class ChatSession {
     await this.startServices()
   }
 
+  /** 登录态失效（401）：记录原因并退出到登录页 */
+  private async handleAuthExpired(reason?: string): Promise<void> {
+    this.lastAuthError = reason ?? '登录已过期，请重新登录'
+    await this.logout()
+  }
+
   /** 退出登录：清除登录状态（本机身份保留），下次需在线登录 */
   async logout(): Promise<void> {
     this.authed = false
@@ -186,6 +196,7 @@ export class ChatSession {
 
   private async applyAuth(token: string, user: ServerUser, identity: Identity, username: string): Promise<void> {
     identity.displayName = user.displayName
+    this.lastAuthError = undefined
     this.identity = identity
     this.token = token
     this.username = username

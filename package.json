@@ -1,6 +1,6 @@
 {
   "name": "chataoo",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "ChatAoo 鈥?灞€鍩熺綉鐐瑰鐐?+ 绂荤嚎浼樺厛鐨勫绔亰澶╁簲鐢?(Vue 3 / Electron / Capacitor)",
   "packageManager": "pnpm@10.33.0",

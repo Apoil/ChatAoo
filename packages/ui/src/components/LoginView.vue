@@ -18,6 +18,8 @@ const showServer = ref(false)
 const showPassword = ref(false)
 const busy = ref(false)
 const error = ref('')
+/** 登录态失效（token 过期/被换绑）时服务器给的提示，重新登录后清空 */
+const expiredHint = computed(() => store.session?.lastAuthError ?? '')
 
 const effectiveServer = computed(() => store.session?.serverUrl ?? serverUrl.value)
 
@@ -161,6 +163,7 @@ async function submit(): Promise<void> {
 
           <div class="error-slot">
             <p v-if="error" class="error" role="alert">{{ error }}</p>
+            <p v-else-if="expiredHint" class="error" role="status">{{ expiredHint }}</p>
           </div>
         </form>
 
