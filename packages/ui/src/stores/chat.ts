@@ -51,7 +51,10 @@ export const useChatStore = defineStore('chat', () => {
           messages.value[key] = list.map((m) => (m.id === id ? { ...m, status } : m))
         }
       }),
-      s.bus.on('conversations', () => void refreshConversations()),
+      s.bus.on('conversations', () => {
+      // 拉取到新会话时好友列表可能也是新的（多设备/另一台设备加的好友）：先刷新好友再过滤会话
+      void refreshFriends().then(() => refreshConversations())
+    }),
       s.bus.on('profile', (p) => {
         profiles.value[p.userId] = p
       }),
@@ -100,7 +103,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function refreshProfiles(): Promise<void> {
     if (!session.value?.authed || !session.value.identity) return
-    const me = session.value.me.userId
+    const me = session.value.accountId ?? session.value.me.userId
     const self = await session.value.store.profGet(me)
     if (self) profiles.value[me] = self
     for (const p of await session.value.profiles()) {
@@ -127,7 +130,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function convIdOf(peerId: string): string {
     const s = session.value
-    return [s!.me.userId, peerId].sort().join('__')
+    return [s!.accountId ?? s!.me.userId, peerId].sort().join('__')
   }
 
   function profileOf(userId: string): Profile | undefined {
@@ -199,7 +202,8 @@ export const useChatStore = defineStore('chat', () => {
     if (!s) return null
     const parts = convId.split('__')
     if (parts.length !== 2) return null
-    return parts[0] === s.me.userId ? parts[1]! : parts[0]!
+    const me = s.accountId ?? s.me.userId
+    return parts[0] === me ? parts[1]! : parts[0]!
   }
 
   async function hideMessage(id: string): Promise<void> {

@@ -175,6 +175,7 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
       }
       // 该设备身份只是「参与过局域网聊天但没注册账号」的占位行 → 直接认领为账号，保留历史数据
       db.claimDeviceStub(body.userId, username, hashPassword(body.password), body.displayName)
+      db.upsertDevice({ deviceId: body.userId, accountUserId: body.userId, publicKey: body.publicKey, displayName: body.displayName })
       const claimedToken = newToken()
       db.createToken(claimedToken, body.userId)
       const claimedUser = db.getUser(body.userId)!
@@ -187,6 +188,7 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
       displayName: body.displayName,
       createdAt: Date.now(),
     })
+    db.upsertDevice({ deviceId: body.userId, accountUserId: body.userId, publicKey: body.publicKey, displayName: body.displayName })
     const token = newToken()
     db.createToken(token, body.userId)
     const user = db.getUser(body.userId)!
@@ -194,9 +196,19 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     return res
   })
 
-  /** 登录：用户名 + 密码（用户名不区分大小写）；离线时无法登录，但已保存的登录状态可直接离线使用 */
+  /**
+   * 登录：用户名 + 密码（用户名不区分大小写）。
+   * 同一账号可在多台设备同时登录：传入本设备的 userId/publicKey 会登记为账号的一台设备，
+   * 签发的 token 绑定到「账号」，不会踢掉其它设备。
+   */
   app.post('/api/v1/auth/login', async (req, reply) => {
-    const body = req.body as { username?: string; password?: string }
+    const body = req.body as {
+      username?: string
+      password?: string
+      userId?: string
+      publicKey?: string
+      displayName?: string
+    }
     if (!body.username || !body.password) {
       return reply.code(400).send({ error: 'username/password required' })
     }
@@ -204,6 +216,19 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     const account = db.userByUsername(username)
     if (!account || !account.passwordHash || !verifyPassword(body.password, account.passwordHash)) {
       return reply.code(401).send({ error: '用户名或密码错误' })
+    }
+    if (body.userId && body.publicKey) {
+      if (!verifyUserId(body.userId, body.publicKey)) {
+        return reply.code(400).send({ error: 'userId does not match publicKey' })
+      }
+      db.upsertDevice({
+        deviceId: body.userId,
+        accountUserId: account.userId,
+        publicKey: body.publicKey,
+        displayName: body.displayName ?? account.displayName,
+      })
+      // 设备变化要让好友下次同步时拿到新的设备列表
+      db.touchUser(account.userId)
     }
     const token = newToken()
     db.createToken(token, account.userId)
@@ -264,6 +289,9 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     }
     const token = newToken()
     db.createToken(token, body.userId)
+    // 换绑后：账号旧的设备登记全部作废，只保留这台新设备
+    db.clearDevices(body.userId)
+    db.upsertDevice({ deviceId: body.userId, accountUserId: body.userId, publicKey: body.publicKey, displayName: account.displayName })
     const user = db.getUser(body.userId)!
     return { token, user: publicUser(user) }
   })
@@ -439,11 +467,13 @@ export function registerRoutes(app: FastifyInstance, opts: RouteOptions): void {
     const profiles: ServerProfile[] = []
     const meRow = db.getUser(me)
     if (meRow && (profilesSince === 0 || meRow.updatedAt > profilesSince)) {
-      profiles.push(toProfile(repairUserAvatar(db, avatarDir, meRow)))
+      profiles.push({ ...toProfile(repairUserAvatar(db, avatarDir, meRow)), devices: db.devicesForUser(meRow.userId) })
     }
     for (const f of friends) {
       const u = db.getUser(f.userId)
-      if (u && u.updatedAt > profilesSince) profiles.push(toProfile(u))
+      if (u && u.updatedAt > profilesSince) {
+        profiles.push({ ...toProfile(u), devices: db.devicesForUser(u.userId) })
+      }
     }
     const result: SyncResult = {
       messages,

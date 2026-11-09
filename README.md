@@ -8,8 +8,8 @@
 
 已打包好的安装包在 [Releases](https://github.com/Apoil/ChatAoo/releases/latest)：
 
-- **Windows x64**：`ChatAoo-Setup-1.1.0.exe`（NSIS 安装包，Win10/11）
-- **Android**：`ChatAoo-1.1.0-android-debug.apk`（手机 / 平板同一 APK，Android 6.0+；debug 签名，可自行重新签名）
+- **Windows x64**：`ChatAoo-Setup-1.2.0.exe`（NSIS 安装包，Win10/11）
+- **Android**：`ChatAoo-1.2.0-android-debug.apk`（手机 / 平板同一 APK，Android 6.0+；debug 签名，可自行重新签名）
 - **网页版**：由同步服务器直接托管，浏览器打开服务器地址即可（例如 `https://chat.kanojohina.com`）
 
 ## 核心特性

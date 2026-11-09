@@ -11,6 +11,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Message, Profile } from '@chataoo/shared'
 import { displayAttachmentKind } from '@chataoo/app-core'
 import { useChatStore } from '../stores/chat'
+import { isEmojiOnly } from '../emoji'
 import AttachmentBubble from './AttachmentBubble.vue'
 import Avatar from './Avatar.vue'
 import Icon from './Icon.vue'
@@ -25,11 +26,15 @@ const props = defineProps<{
 const emit = defineEmits<{ open: [attachment: NonNullable<Message['attachment']>] }>()
 const store = useChatStore()
 
-const mine = computed(() => props.message.senderId === store.session?.me.userId)
+const mine = computed(() => props.message.senderId === store.session?.accountId)
 const revoked = computed(() => !!props.message.revoked)
 const failed = computed(() => mine.value && props.message.status === 'failed')
 const canRevoke = computed(
   () => mine.value && !revoked.value && Date.now() - props.message.createdAt < 2 * 60 * 1000,
+)
+/** 纯表情消息放大成贴纸效果 */
+const bigEmoji = computed(
+  () => props.message.kind === 'text' && !!props.message.text && isEmojiOnly(props.message.text, 3),
 )
 
 const menu = ref<{ x: number; y: number } | null>(null)
@@ -232,7 +237,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="bubble" :class="{ mine, 'is-sending': message.status === 'pending' }">
-          <p v-if="message.text" class="text">{{ message.text }}</p>
+          <p v-if="message.text" class="text" :class="{ 'emoji-big': bigEmoji }">{{ message.text }}</p>
           <AttachmentBubble
             v-if="message.attachment"
             :attachment="message.attachment"
@@ -367,6 +372,13 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
   word-break: break-word;
   user-select: text;
+}
+
+/* 纯表情消息：放大成贴纸，气泡内留白收紧 */
+.text.emoji-big {
+  font-size: 44px;
+  line-height: 1.15;
+  padding: 2px 2px 0;
 }
 
 .meta {

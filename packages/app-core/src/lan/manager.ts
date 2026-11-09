@@ -21,7 +21,10 @@ import { verifyBeacon } from './beacon.js'
 import type { P2PClientMsg, P2PMsg, P2PServerMsg } from '@chataoo/shared'
 
 interface PeerState {
+  /** 账号 ID（会话与好友都用账号维度） */
   userId: string
+  /** 最近一次信标里的设备 ID */
+  deviceId?: string
   displayName: string
   host: string
   lastSeen: number
@@ -122,23 +125,53 @@ export class LanManager {
 
   /* ---------------- 信标处理 ---------------- */
 
+  /**
+   * 把局域网里的「设备身份」解析成「账号身份」。
+   * 多设备同账号：服务器资料同步下来每台设备的公钥，只有登记过的设备才被接受；
+   * 兼容旧数据：设备 ID 本身就是好友账号时直接使用。
+   */
+  private async resolveAccount(deviceId: string, claim?: string): Promise<string | null> {
+    const store = this.deps.store
+    const self = this.deps.identity
+    if (deviceId === self.userId) return null // 自己发出的信标
+    const mapped = await store.deviceAccount(deviceId)
+    if (mapped) {
+      // 设备登记在某个账号下：声称的账号必须与登记一致
+      if (claim && claim !== mapped) return null
+      const friend = await store.friendGet(mapped)
+      return friend?.status === 'friends' ? mapped : null
+    }
+    // 未登记的设备：仅接受「设备 ID 恰好是好友账号」的旧版身份
+    if (claim && claim !== deviceId) return null
+    const direct = await store.friendGet(deviceId)
+    return direct?.status === 'friends' ? deviceId : null
+  }
+
   private async handleBeacon(packet: BeaconPacket, host: string): Promise<void> {
     const ok = await verifyBeacon(packet)
     if (!ok) return
-    // 好友白名单门控：仅好友设备可被发现/连接
-    const friend = await this.deps.store.friendGet(packet.userId)
-    if (!friend || friend.status !== 'friends') return
+    // 好友白名单门控：设备 → 账号解析后再判断
+    const accountId = await this.resolveAccount(packet.userId, packet.accountUserId)
+    if (!accountId) return
 
     const now = Date.now()
-    let peer = this.peers.get(packet.userId)
+    let peer = this.peers.get(accountId)
     if (!peer) {
-      peer = { userId: packet.userId, displayName: packet.displayName, host, lastSeen: now, conn: undefined }
-      this.peers.set(packet.userId, peer)
-      this.deps.bus.emit('lan-peer', { userId: packet.userId, online: true, host })
+      peer = {
+        userId: accountId,
+        deviceId: packet.userId,
+        displayName: packet.displayName,
+        host,
+        lastSeen: now,
+        conn: undefined,
+      }
+      this.peers.set(accountId, peer)
+      this.deps.bus.emit('lan-peer', { userId: accountId, online: true, host })
     } else {
       peer.lastSeen = now
       peer.host = host
-      if (!peer.conn) this.deps.bus.emit('lan-peer', { userId: packet.userId, online: true, host })
+      peer.deviceId = packet.userId
+      if (!peer.conn) this.deps.bus.emit('lan-peer', { userId: accountId, online: true, host })
     }
     // 好友在线但未连接 -> 主动建立 P2P
     if (!peer.conn) {
@@ -187,6 +220,7 @@ export class LanManager {
       conn.send({
         type: 'hello',
         userId: this.deps.identity.userId,
+        accountUserId: this.deps.identity.accountUserId ?? this.deps.identity.userId,
         displayName: this.deps.identity.displayName,
       } satisfies P2PClientMsg)
     }
@@ -198,23 +232,36 @@ export class LanManager {
       case 'hello': {
         conn.peerUserId = msg.userId
         // 反向 hello：双向确认（协议对称，双方互发 hello）
-        if (conn.peerUserId !== this.deps.identity.userId) {
+        if (msg.userId !== this.deps.identity.userId) {
           conn.send({
             type: 'hello',
             userId: this.deps.identity.userId,
+            accountUserId: this.deps.identity.accountUserId ?? this.deps.identity.userId,
             displayName: this.deps.identity.displayName,
           } satisfies P2PClientMsg)
         }
-        const friend = await this.deps.store.friendGet(msg.userId)
-        if (!friend || friend.status !== 'friends') {
+        // 设备 → 账号映射后再判断好友关系
+        const accountId = await this.resolveAccount(msg.userId, msg.accountUserId)
+        if (!accountId) {
           conn.close() // 非好友连接直接断开
           return
         }
-        // 更新本地对端表
-        const p = this.peers.get(msg.userId)
-        if (p) p.conn = conn
-        else this.peers.set(msg.userId, { userId: msg.userId, displayName: msg.displayName, host: '', lastSeen: Date.now(), conn })
-        this.deps.bus.emit('lan-peer', { userId: msg.userId, online: true })
+        // 更新本地对端表（以账号为键）
+        const p = this.peers.get(accountId)
+        if (p) {
+          p.conn = conn
+          p.deviceId = msg.userId
+        } else {
+          this.peers.set(accountId, {
+            userId: accountId,
+            deviceId: msg.userId,
+            displayName: msg.displayName,
+            host: '',
+            lastSeen: Date.now(),
+            conn,
+          })
+        }
+        this.deps.bus.emit('lan-peer', { userId: accountId, online: true })
         break
       }
       case 'message': {

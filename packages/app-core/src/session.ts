@@ -146,25 +146,27 @@ export class ChatSession {
     return this.identity!
   }
 
-  /** 登录（在线必需）。新设备登录同一账号自动重绑定。 */
+  /** 数据身份：多设备同账号时消息/好友/会话都用「账号 ID」，局域网信标用设备 ID */
+  get accountId(): string {
+    return this.identity!.accountUserId ?? this.identity!.userId
+  }
+
+  /** 登录（在线必需）。同一账号可在多台设备同时在线：服务器把本设备登记为账号的设备之一。 */
   async login(username: string, password: string): Promise<void> {
-    const res = await this.api.login({ username, password })
     let identity = this.identity
-    if (!identity) identity = await generateIdentity(res.user.displayName)
-    if (identity.userId !== res.user.userId) {
-      // 本设备未绑定该账号 → 重绑定
-      const reb = await this.api.rebind(identity, { username, password })
-      await this.applyAuth(reb.token, reb.user, identity, username)
-    } else {
-      await this.applyAuth(res.token, res.user, identity, username)
-    }
+    if (!identity) identity = await generateIdentity(username)
+    const res = await this.api.login(identity, { username, password })
+    identity.accountUserId = res.user.userId
+    await this.applyAuth(res.token, res.user, identity, username)
     await this.startServices()
   }
 
-  /** 注册（在线必需）：用户名 + 密码 + 昵称，绑定本设备身份 */
+  /** 注册（在线必需）：用户名 + 密码 + 昵称；首个设备即账号身份 */
   async register(username: string, password: string, displayName: string): Promise<void> {
     const identity = this.identity ?? (await generateIdentity(displayName))
     const res = await this.api.register(identity, { username, password, displayName })
+    identity.accountUserId = res.user.userId
+    identity.displayName = res.user.displayName
     await this.applyAuth(res.token, res.user, identity, username)
     await this.startServices()
   }
@@ -190,15 +192,16 @@ export class ChatSession {
     await this.store.kvSet('identity', identity)
     await this.store.kvSet('serverToken', token)
     await this.store.kvSet('username', username)
+    const selfId = identity.accountUserId ?? identity.userId
     await this.store.profPut({
-      userId: identity.userId,
+      userId: selfId,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
       avatarHash: user.avatarHash,
       updatedAt: Date.now(),
     })
     this.bus.emit('profile', {
-      userId: identity.userId,
+      userId: selfId,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
       avatarHash: user.avatarHash,
@@ -221,8 +224,8 @@ export class ChatSession {
     }
     this.identity.displayName = trimmed
     await this.store.kvSet('identity', this.identity)
-    const p = (await this.store.profGet(this.identity.userId)) ?? {
-      userId: this.identity.userId,
+    const p = (await this.store.profGet(this.accountId)) ?? {
+      userId: this.accountId,
       displayName: trimmed,
       updatedAt: Date.now(),
     }
@@ -275,11 +278,11 @@ export class ChatSession {
   /* ---------------- 发送 ---------------- */
 
   async sendText(peerId: string, text: string): Promise<Message> {
-    const convId = directConversationId(this.identity.userId, peerId)
+    const convId = directConversationId(this.accountId, peerId)
     const msg: Message = {
       id: randomId('m'),
       conversationId: convId,
-      senderId: this.identity.userId,
+      senderId: this.accountId,
       kind: 'text',
       text,
       createdAt: Date.now(),
@@ -294,7 +297,7 @@ export class ChatSession {
   ): Promise<Message> {
     const media = this.platform.media
     const blob = typedBlob(file.blob, file.mimeType)
-    const convId = directConversationId(this.identity.userId, peerId)
+    const convId = directConversationId(this.accountId, peerId)
     const now = Date.now()
     const attachment: Attachment = {
       id: randomId('a'),
@@ -312,7 +315,7 @@ export class ChatSession {
     const msg: Message = {
       id: randomId('m'),
       conversationId: convId,
-      senderId: this.identity.userId,
+      senderId: this.accountId,
       kind: 'attachment',
       attachment,
       createdAt: now,
@@ -394,9 +397,9 @@ export class ChatSession {
 
   async revokeMessage(id: string): Promise<void> {
     const m = await this.store.msgGet(id)
-    if (!m || m.senderId !== this.identity.userId) return
+    if (!m || m.senderId !== this.accountId) return
     await this.applyRevoke(m)
-    const peer = m.conversationId.split('__').find((p) => p && p !== this.identity.userId)
+    const peer = m.conversationId.split('__').find((p) => p && p !== this.accountId)
     if (peer && this.lan?.isOnline(peer)) this.lan.sendDelete(peer, id)
     if (this.sync?.online) {
       try {
@@ -449,7 +452,7 @@ export class ChatSession {
   private async onPeerMessage(m: Message): Promise<void> {
     await this.sync.ingestMessage(m, { unread: true, viaLan: true })
     // 离线局域网收到的消息：标记待同步（服务器去重，由发送方最终上传）
-    if (m.senderId === this.identity.userId) {
+    if (m.senderId === this.accountId) {
       await this.store.msgSetStatus(m.id, 'delivered')
     }
   }
@@ -461,7 +464,7 @@ export class ChatSession {
 
   /** 点开好友时保证本地已有会话行，否则聊天区找不到会话 */
   async ensureDirectConversation(peerId: string): Promise<string> {
-    const convId = directConversationId(this.identity.userId, peerId)
+    const convId = directConversationId(this.accountId, peerId)
     await this.store.convEnsure(convId, peerId)
     this.bus.emit('conversations', { conversationId: convId })
     return convId
@@ -472,7 +475,7 @@ export class ChatSession {
   /** 按用户名添加好友（在线解析；离线不可添加） */
   async addFriend(username: string): Promise<void> {
     const resolved = await this.api.resolveUser(username.trim())
-    if (resolved.userId === this.identity.userId) throw new Error('不能添加自己')
+    if (resolved.userId === this.accountId) throw new Error('不能添加自己')
     await this.api.requestFriend(resolved.userId)
     await this.store.profPut({
       userId: resolved.userId,
@@ -525,8 +528,8 @@ export class ChatSession {
     } catch (e) {
       if (!(await media.has(sha256).catch(() => false))) throw e
     }
-    const p = (await this.store.profGet(this.identity.userId)) ?? {
-      userId: this.identity.userId,
+    const p = (await this.store.profGet(this.accountId)) ?? {
+      userId: this.accountId,
       displayName: this.identity.displayName,
       updatedAt: Date.now(),
     }

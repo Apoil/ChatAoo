@@ -2,7 +2,7 @@
  * 线上（服务器）与线下（局域网 P2P）两套线协议定义。
  * 所有载荷均为 JSON；局域网 TCP 使用 "JSON 行" 帧（每行一条消息）。
  */
-import type { Attachment, FriendStatus, Message } from './types.js'
+import type { Attachment, DeviceInfo, FriendStatus, Message } from './types.js'
 
 /* ------------------------------------------------------------------ */
 /* 服务器 REST + WebSocket 协议                                         */
@@ -56,6 +56,8 @@ export interface ServerProfile {
   avatarUrl?: string
   avatarHash?: string
   statusText?: string
+  /** 该账号下登记的设备（用于局域网设备→账号映射） */
+  devices?: DeviceInfo[]
   updatedAt: number
 }
 
@@ -111,7 +113,10 @@ export type ServerToClient =
 export interface BeaconPacket {
   /** 协议版本 */
   v: 1
+  /** 设备 ID（= 本设备公钥哈希） */
   userId: string
+  /** 账号 ID（多设备同账号时为账号身份；旧版本没有该字段时按 userId 处理） */
+  accountUserId?: string
   /** 公钥（hex），用于验证签名与派生 userId */
   publicKey: string
   displayName: string
@@ -119,14 +124,17 @@ export interface BeaconPacket {
   nonce: string
   /** 发送时间戳（ms） */
   ts: number
-  /** ED25519 签名：sign(privateKey, `${userId}|${displayName}|${nonce}|${ts}`) */
+  /** ED25519 签名：sign(privateKey, `${userId}|${accountUserId}|${displayName}|${nonce}|${ts}`) */
   sig: string
 }
 
 /** P2P 连接欢迎包 */
 export interface P2PHello {
   type: 'hello'
+  /** 设备 ID */
   userId: string
+  /** 账号 ID（可选，用于多设备映射） */
+  accountUserId?: string
   displayName: string
   /** 对信标 payload 的签名（可选，用于二次验证） */
   sig?: string

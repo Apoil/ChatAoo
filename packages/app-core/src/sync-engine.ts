@@ -49,6 +49,11 @@ export class SyncEngine {
 
   constructor(private deps: SyncDeps) {}
 
+  /** 数据身份（账号 ID）：多设备同账号时与设备 ID 不同 */
+  private get accountId(): string {
+    return this.deps.identity.accountUserId ?? this.accountId
+  }
+
   /** 校验已保存的登录状态（有 token 则验证；无 token 保持待登录） */
   async ensureAccount(): Promise<void> {
     const store = this.deps.store
@@ -63,7 +68,7 @@ export class SyncEngine {
         await store.kvSet('identity', this.deps.identity)
       }
       await this.upsertProfile({
-        userId: this.deps.identity.userId,
+        userId: this.accountId,
         displayName: user.displayName || this.deps.identity.displayName,
         avatarUrl: user.avatarUrl,
         avatarHash: user.avatarHash,
@@ -174,7 +179,7 @@ export class SyncEngine {
   }
 
   private async applyFriendEntries(friends: ServerFriend[]): Promise<void> {
-    const me = this.deps.identity.userId
+    const me = this.accountId
     for (const f of friends) {
       if (f.status === 'none') {
         await this.deps.store.purgePeer(me, f.userId)
@@ -198,7 +203,7 @@ export class SyncEngine {
   }
 
   private async hydrateSelfProfile(): Promise<void> {
-    const me = this.deps.identity.userId
+    const me = this.accountId
     try {
       const user = await this.deps.api.me()
       await this.upsertProfile({
@@ -270,7 +275,7 @@ export class SyncEngine {
   async hydrateFriends(): Promise<void> {
     try {
       const { friends } = await this.deps.api.friends()
-      const me = this.deps.identity.userId
+      const me = this.accountId
       const keep = new Set(friends.map((f) => f.userId))
       keep.add(me)
       for (const local of await this.deps.store.friendsList()) {
@@ -287,7 +292,7 @@ export class SyncEngine {
   /** 删掉不在服务器好友列表里的本地幽灵身份（换设备留下的旧 userId） */
   private async reconcileLocalPeers(): Promise<void> {
     const store = this.deps.store
-    const me = this.deps.identity.userId
+    const me = this.accountId
     const friends = (await store.friendsList()).filter((f) => f.status !== 'none')
     const keep = new Set(friends.map((f) => f.userId))
     keep.add(me)
@@ -319,6 +324,7 @@ export class SyncEngine {
         await this.ingestServerMessage(sm, false)
       }
       for (const p of result.profiles) {
+        if (p.devices?.length) await store.devicePutMany(p.userId, p.devices)
         await this.upsertProfile(p)
       }
       await this.applyFriendEntries(result.friends)
@@ -333,7 +339,7 @@ export class SyncEngine {
   /** 收到（服务器或局域网）消息：去重入库 + 更新会话 + 通知 UI */
   async ingestMessage(msg: Message, opts: { unread: boolean; viaLan?: boolean }): Promise<boolean> {
     const store = this.deps.store
-    const me = this.deps.identity.userId
+    const me = this.accountId
     const peer = msg.senderId === me
       ? msg.conversationId.split('__').find((p) => p && p !== me)
       : msg.senderId
@@ -388,7 +394,7 @@ export class SyncEngine {
       }
       return false
     }
-    const unread = opts.unread && msg.senderId !== this.deps.identity.userId
+    const unread = opts.unread && msg.senderId !== this.accountId
     await store.msgPut(msg)
     await store.convTouch(
       msg.conversationId,

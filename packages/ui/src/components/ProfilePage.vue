@@ -22,14 +22,16 @@ const THEME_OPTIONS: { value: ThemeMode; label: string; icon: 'sun' | 'moon' | '
   { value: 'system', label: '跟随系统', icon: 'monitor' },
 ]
 
-const isSelf = computed(() => !props.peerId || props.peerId === store.session?.me.userId)
+/** 自己的身份用「账号 ID」：多设备同账号时设备 ID 与账号 ID 不同 */
+const selfId = computed(() => store.session?.accountId ?? store.session?.me.userId ?? '')
+const isSelf = computed(() => !props.peerId || props.peerId === selfId.value)
 const profile = computed<Profile | null>(() => {
   const s = store.session
   if (!s) return null
   if (isSelf.value) {
     return (
-      store.profileOf(s.me.userId) ?? {
-        userId: s.me.userId,
+      store.profileOf(selfId.value) ?? {
+        userId: selfId.value,
         displayName: s.me.displayName,
         updatedAt: Date.now(),
       }
@@ -38,7 +40,7 @@ const profile = computed<Profile | null>(() => {
   return store.profileOf(props.peerId!) ?? null
 })
 
-const uid = computed(() => (isSelf.value ? store.session?.me.userId : props.peerId) ?? '')
+const uid = computed(() => (isSelf.value ? selfId.value : props.peerId) ?? '')
 const displayName = computed(() => profile.value?.displayName ?? '未知用户')
 const username = computed(() => (isSelf.value ? store.session?.username : undefined))
 const serverUrl = computed(() => store.session?.serverUrl ?? '')

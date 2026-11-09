@@ -77,11 +77,20 @@ export class ServerApi {
     })
   }
 
-  /** 登录：用户名 + 密码（仅在线可用） */
-  login(opts: { username: string; password: string }): Promise<AuthResponse> {
+  /** 登录：用户名 + 密码（多设备：附带本设备身份，服务器登记为账号的一台设备） */
+  login(
+    identity: { userId: string; publicKey: string; displayName?: string },
+    opts: { username: string; password: string },
+  ): Promise<AuthResponse> {
     return this.req<AuthResponse>('/api/v1/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username: opts.username, password: opts.password }),
+      body: JSON.stringify({
+        username: opts.username,
+        password: opts.password,
+        userId: identity.userId,
+        publicKey: identity.publicKey,
+        displayName: identity.displayName,
+      }),
     })
   }
 

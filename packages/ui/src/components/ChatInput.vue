@@ -9,6 +9,12 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from './Icon.vue'
+import {
+  EMOJI_CATEGORIES,
+  EMOJI_RECENT,
+  loadRecentEmoji,
+  pushRecentEmoji,
+} from '../emoji'
 
 const props = withDefaults(defineProps<{ placeholder?: string }>(), { placeholder: '发送消息' })
 const emit = defineEmits<{
@@ -27,6 +33,16 @@ const wrap = ref<HTMLElement | null>(null)
 const menuOpen = ref(false)
 const dragging = ref(false)
 let dragDepth = 0
+
+/* ---------------- 表情包 ---------------- */
+const emojiOpen = ref(false)
+const emojiTab = ref<string>(EMOJI_RECENT)
+const recentEmoji = ref<string[]>(loadRecentEmoji())
+const emojiTabs = computed(() => [{ key: EMOJI_RECENT, name: '最近' }, ...EMOJI_CATEGORIES])
+const currentEmojis = computed<string[]>(() => {
+  if (emojiTab.value === EMOJI_RECENT) return recentEmoji.value
+  return EMOJI_CATEGORIES.find((c) => c.key === emojiTab.value)?.emojis ?? []
+})
 
 const canSend = computed(() => text.value.trim().length > 0)
 
@@ -52,6 +68,30 @@ function submit(): void {
 
 function toggleMenu(): void {
   menuOpen.value = !menuOpen.value
+  if (menuOpen.value) emojiOpen.value = false
+}
+
+function toggleEmoji(): void {
+  emojiOpen.value = !emojiOpen.value
+  if (emojiOpen.value) {
+    menuOpen.value = false
+    emojiTab.value = recentEmoji.value.length ? EMOJI_RECENT : EMOJI_CATEGORIES[0]!.key
+  }
+}
+
+/** 在光标处插入 emoji，保持输入框焦点与高度 */
+function insertEmoji(emoji: string): void {
+  const el = area.value
+  const start = el?.selectionStart ?? text.value.length
+  const end = el?.selectionEnd ?? text.value.length
+  text.value = text.value.slice(0, start) + emoji + text.value.slice(end)
+  recentEmoji.value = pushRecentEmoji(emoji)
+  void nextTick(() => {
+    resize()
+    el?.focus()
+    const pos = start + emoji.length
+    el?.setSelectionRange(pos, pos)
+  })
 }
 
 function pickFiles(kind: 'file' | 'image'): void {
@@ -113,15 +153,16 @@ function onDrop(ev: DragEvent): void {
 }
 
 function onDoc(ev: MouseEvent | TouchEvent): void {
-  if (!menuOpen.value) return
   const target = ev.target as HTMLElement | null
-  if (target?.closest('.attach-wrap')) return
-  menuOpen.value = false
+  if (menuOpen.value && !target?.closest('.attach-wrap')) menuOpen.value = false
+  if (emojiOpen.value && !target?.closest('.emoji-wrap')) emojiOpen.value = false
 }
 
 function onWindowKey(ev: KeyboardEvent): void {
-  if (ev.key === 'Escape' && menuOpen.value) {
+  if (ev.key !== 'Escape') return
+  if (menuOpen.value || emojiOpen.value) {
     menuOpen.value = false
+    emojiOpen.value = false
     area.value?.focus()
   }
 }
@@ -160,6 +201,52 @@ onBeforeUnmount(() => {
     />
 
     <div class="bar">
+      <div class="emoji-wrap">
+        <button
+          type="button"
+          class="icon-btn emoji-btn"
+          :class="{ 'is-active': emojiOpen }"
+          title="表情"
+          aria-label="选择表情"
+          aria-haspopup="dialog"
+          :aria-expanded="emojiOpen"
+          @click="toggleEmoji"
+        >
+          <Icon name="smile" :size="20" />
+        </button>
+        <Transition name="pop">
+          <div v-if="emojiOpen" class="emoji-panel" role="dialog" aria-label="表情包">
+            <div class="emoji-tabs" role="tablist" aria-label="表情分类">
+              <button
+                v-for="tab in emojiTabs"
+                :key="tab.key"
+                type="button"
+                role="tab"
+                class="emoji-tab"
+                :class="{ on: emojiTab === tab.key }"
+                :aria-selected="emojiTab === tab.key"
+                @click="emojiTab = tab.key"
+              >
+                {{ tab.name }}
+              </button>
+            </div>
+            <div v-if="currentEmojis.length" class="emoji-grid">
+              <button
+                v-for="e in currentEmojis"
+                :key="e"
+                type="button"
+                class="emoji-cell"
+                :aria-label="`插入表情 ${e}`"
+                @click="insertEmoji(e)"
+              >
+                {{ e }}
+              </button>
+            </div>
+            <p v-else class="emoji-empty">还没有用过的表情</p>
+          </div>
+        </Transition>
+      </div>
+
       <div class="attach-wrap">
         <button
           type="button"
@@ -399,6 +486,90 @@ onBeforeUnmount(() => {
   font-size: var(--fs-sm);
   font-weight: 600;
   line-height: var(--lh-base);
+}
+
+/* ---------- 表情包 ---------- */
+.emoji-wrap {
+  position: relative;
+  flex: none;
+}
+.emoji-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.emoji-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + var(--s-2));
+  z-index: 30;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s-2);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.emoji-tabs {
+  display: flex;
+  gap: var(--s-1);
+  padding: 0 var(--s-1) var(--s-2);
+  overflow-x: auto;
+  flex: none;
+}
+.emoji-tab {
+  flex: none;
+  height: 30px;
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.emoji-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.emoji-tab.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: var(--s-1);
+  overflow-y: auto;
+  padding: 0 var(--s-1) var(--s-1);
+}
+.emoji-cell {
+  width: 100%;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.emoji-cell:hover {
+  background: var(--bg-hover);
+}
+.emoji-cell:active {
+  transform: scale(0.92);
+}
+.emoji-empty {
+  margin: var(--s-2);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
 }
 
 /* ---------- 手机 ---------- */

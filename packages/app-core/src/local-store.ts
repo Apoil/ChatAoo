@@ -37,10 +37,15 @@ interface Schema extends DBSchema {
   friends: { key: string; value: FriendRecord }
   outbox: { key: string; value: OutboxEntry }
   cursors: { key: string; value: number }
+  /** 设备表：局域网把「设备 ID」映射回「账号 ID」（多设备同账号） */
+  devices: {
+    key: string
+    value: { deviceId: string; accountUserId: string; publicKey: string; updatedAt: number }
+  }
 }
 
 const DB_NAME = 'chataoo'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 export class LocalStore {
   private constructor(private db: IDBPDatabase<Schema>) {}
@@ -50,7 +55,7 @@ export class LocalStore {
    * 在这里被捕获，记录确切位置并尝试 JSON 清洗降级，避免应用崩溃。
    */
   private async putSafe(
-    storeName: 'kv' | 'conversations' | 'messages' | 'profiles' | 'friends' | 'outbox' | 'cursors',
+    storeName: 'kv' | 'conversations' | 'messages' | 'profiles' | 'friends' | 'outbox' | 'cursors' | 'devices',
     value: unknown,
     key?: IDBValidKey,
     context = '',
@@ -93,6 +98,7 @@ export class LocalStore {
         if (!d.objectStoreNames.contains('friends')) d.createObjectStore('friends', { keyPath: 'userId' })
         if (!d.objectStoreNames.contains('outbox')) d.createObjectStore('outbox', { keyPath: 'message.id' })
         if (!d.objectStoreNames.contains('cursors')) d.createObjectStore('cursors')
+        if (!d.objectStoreNames.contains('devices')) d.createObjectStore('devices', { keyPath: 'deviceId' })
       },
     })
     return new LocalStore(db)
@@ -110,6 +116,28 @@ export class LocalStore {
 
   async kvDel(key: string): Promise<void> {
     await this.db.delete('kv', key)
+  }
+
+  /* ---------------- 设备（多设备同账号） ---------------- */
+
+  /** 服务器资料里带下来的设备列表：用于把局域网里的设备 ID 映射回账号 ID */
+  async devicePutMany(
+    accountUserId: string,
+    devices: { deviceId: string; publicKey: string }[],
+  ): Promise<void> {
+    for (const d of devices) {
+      await this.putSafe(
+        'devices',
+        { deviceId: d.deviceId, publicKey: d.publicKey, accountUserId, updatedAt: Date.now() },
+        d.deviceId,
+        `device=${d.deviceId}`,
+      )
+    }
+  }
+
+  async deviceAccount(deviceId: string): Promise<string | undefined> {
+    const row = (await this.db.get('devices', deviceId)) as { accountUserId?: string } | undefined
+    return row?.accountUserId
   }
 
   /* ---------------- 会话 ---------------- */

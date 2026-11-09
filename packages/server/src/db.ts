@@ -8,6 +8,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   Attachment,
+  DeviceInfo,
   FriendStatus,
   Message,
   MessageKind,
@@ -36,6 +37,10 @@ export interface Db {
   getUser(userId: string): UserRow | undefined
   updateUserProfile(userId: string, patch: { avatarUrl?: string; avatarHash?: string; statusText?: string }): void
   touchUser(userId: string): void
+  /* 设备（同一账号可登录多台设备） */
+  upsertDevice(d: { deviceId: string; accountUserId: string; publicKey: string; displayName?: string }): void
+  devicesForUser(accountUserId: string): DeviceInfo[]
+  clearDevices(accountUserId: string): void
   /* token */
   createToken(token: string, userId: string): void
   userForToken(token: string): string | undefined
@@ -123,6 +128,15 @@ CREATE TABLE IF NOT EXISTS tokens (
   userId TEXT NOT NULL,
   createdAt INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS devices (
+  deviceId TEXT PRIMARY KEY,
+  accountUserId TEXT NOT NULL,
+  publicKey TEXT NOT NULL,
+  displayName TEXT,
+  createdAt INTEGER NOT NULL,
+  lastSeenAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_devices_account ON devices(accountUserId);
 CREATE TABLE IF NOT EXISTS friends (
   a TEXT NOT NULL,
   b TEXT NOT NULL,
@@ -324,6 +338,35 @@ export function openDb(dataDir: string): Db {
         userId,
       ),
     touchUser: (userId) => stmt.touchUser.run(Date.now(), userId),
+    upsertDevice: (d) => {
+      const now = Date.now()
+      db.prepare(
+        `INSERT INTO devices (deviceId, accountUserId, publicKey, displayName, createdAt, lastSeenAt)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(deviceId) DO UPDATE SET
+           accountUserId = excluded.accountUserId,
+           publicKey = excluded.publicKey,
+           displayName = excluded.displayName,
+           lastSeenAt = excluded.lastSeenAt`,
+      ).run(d.deviceId, d.accountUserId, d.publicKey, d.displayName ?? null, now, now)
+    },
+    devicesForUser: (accountUserId) =>
+      (
+        db
+          .prepare('SELECT deviceId, publicKey, displayName, createdAt FROM devices WHERE accountUserId = ? ORDER BY createdAt')
+          .all(accountUserId) as {
+          deviceId: string
+          publicKey: string
+          displayName: string | null
+          createdAt: number
+        }[]
+      ).map((r) => ({
+        deviceId: r.deviceId,
+        publicKey: r.publicKey,
+        displayName: r.displayName ?? undefined,
+        createdAt: r.createdAt,
+      })),
+    clearDevices: (accountUserId) => db.prepare('DELETE FROM devices WHERE accountUserId = ?').run(accountUserId),
     createToken: (token, userId) => stmt.createToken.run(token, userId, Date.now()),
     userForToken: (token) => (stmt.userForToken.get(token) as { userId: string } | undefined)?.userId,
     friendStatus: (a, b) => {

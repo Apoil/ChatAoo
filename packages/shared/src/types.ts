@@ -4,14 +4,30 @@
 
 /** 客户端本地生成的身份（ED25519 密钥对 + 派生用户 ID） */
 export interface Identity {
-  /** 用户 ID：由公钥哈希派生，全局唯一，如 u_1a2b... */
+  /** 设备 ID：由本设备公钥哈希派生，全局唯一，如 u_1a2b... */
   userId: string
+  /**
+   * 账号 ID：服务器上的账号身份。
+   * 单设备时等于 userId；同一账号登录多台设备时，各设备沿用账号 ID 作为数据身份，
+   * 而 userId 保持设备自身（用于局域网信标验签）。
+   */
+  accountUserId?: string
   /** ED25519 公钥（hex） */
   publicKey: string
   /** ED25519 私钥（hex），仅存本地，不离开设备 */
   privateKey: string
   displayName: string
   createdAt: number
+}
+
+/** 账号下的一台设备（用于局域网把"设备"映射回"账号"） */
+export interface DeviceInfo {
+  /** 设备 ID = 该设备公钥哈希 */
+  deviceId: string
+  /** 设备公钥（hex） */
+  publicKey: string
+  displayName?: string
+  createdAt?: number
 }
 
 /** 好友关系状态 */
@@ -26,6 +42,8 @@ export interface Profile {
   /** 头像内容 SHA-256，用于本地缓存校验与去重 */
   avatarHash?: string
   statusText?: string
+  /** 该账号下的设备列表（用于局域网发现时把设备 ID 映射到账号） */
+  devices?: DeviceInfo[]
   updatedAt: number
 }
 

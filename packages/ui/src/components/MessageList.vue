@@ -129,7 +129,7 @@ watch(
   () => messages.value.length,
   () => {
     const last = messages.value[messages.value.length - 1]
-    const mine = !!last && !!store.session && last.senderId === store.session.me.userId
+    const mine = !!last && !!store.session && last.senderId === (store.session.accountId ?? store.session.me.userId)
     if (stickToBottom.value || mine) void scrollToBottom(true)
   },
 )

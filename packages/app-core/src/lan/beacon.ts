@@ -13,16 +13,20 @@ import {
   type Identity,
 } from '@chataoo/shared'
 
-export function beaconPayload(p: Pick<BeaconPacket, 'userId' | 'displayName' | 'nonce' | 'ts'>): string {
-  return `${p.userId}|${p.displayName}|${p.nonce}|${p.ts}`
+export function beaconPayload(
+  p: Pick<BeaconPacket, 'userId' | 'accountUserId' | 'displayName' | 'nonce' | 'ts'>,
+): string {
+  return `${p.userId}|${p.accountUserId ?? ''}|${p.displayName}|${p.nonce}|${p.ts}`
 }
 
 export async function buildBeacon(identity: Identity): Promise<BeaconPacket> {
   const nonce = randomNonce()
   const ts = Date.now()
+  const accountUserId = identity.accountUserId ?? identity.userId
   const payload: Omit<BeaconPacket, 'sig'> = {
     v: PROTOCOL_VERSION as 1,
     userId: identity.userId,
+    accountUserId,
     publicKey: identity.publicKey,
     displayName: identity.displayName,
     nonce,
