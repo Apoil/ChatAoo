@@ -339,8 +339,11 @@ watch(
               @open="openAttachment"
             />
             <ChatInput
+              :stickers="store.stickers"
               @send-text="(t) => store.sendText(t)"
               @send-files="(f) => store.sendFiles(f)"
+              @send-sticker="(s) => store.sendSticker(s)"
+              @add-sticker="(f) => store.addSticker(f)"
             />
           </template>
           <div v-else class="chat-empty">

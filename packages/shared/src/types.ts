@@ -76,6 +76,8 @@ export interface Attachment {
   uploadProgress?: number
   /** 发送阶段（仅本地，不上报） */
   uploadPhase?: 'preparing' | 'uploading' | 'sending'
+  /** 是否为表情包（自定义贴纸）：气泡里按贴纸尺寸展示，不显示文件名等附件外观 */
+  sticker?: boolean
   createdAt: number
 }
 

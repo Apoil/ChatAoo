@@ -497,7 +497,13 @@ watch(
           />
 
           <div class="composer-wrap" :style="{ paddingBottom: composerPad }">
-            <ChatInput @send-text="onSendText" @send-files="onSendFiles" />
+            <ChatInput
+              :stickers="store.stickers"
+              @send-text="onSendText"
+              @send-files="onSendFiles"
+              @send-sticker="(s) => store.sendSticker(s)"
+              @add-sticker="(f) => store.addSticker(f)"
+            />
           </div>
         </template>
 

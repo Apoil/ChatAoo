@@ -243,6 +243,7 @@ onBeforeUnmount(() => {
             :attachment="message.attachment"
             :failed="failed"
             :outgoing="mine"
+            :sticker="!!message.attachment?.sticker"
             @open="(a) => emit('open', a)"
             @retry="retry"
           />

@@ -16,10 +16,19 @@ import {
   pushRecentEmoji,
 } from '../emoji'
 
-const props = withDefaults(defineProps<{ placeholder?: string }>(), { placeholder: '发送消息' })
+const props = withDefaults(
+  defineProps<{
+    placeholder?: string
+    /** 「我的表情」：图片/GIF 贴纸（url 由上层解析好） */
+    stickers?: { id: string; name: string; url: string }[]
+  }>(),
+  { placeholder: '发送消息', stickers: () => [] },
+)
 const emit = defineEmits<{
   'send-text': [text: string]
   'send-files': [files: { blob: Blob; name: string }[]]
+  'send-sticker': [sticker: { id: string; name: string; url: string }]
+  'add-sticker': [file: File]
 }>()
 
 const MIN_H = 40
@@ -38,11 +47,29 @@ let dragDepth = 0
 const emojiOpen = ref(false)
 const emojiTab = ref<string>(EMOJI_RECENT)
 const recentEmoji = ref<string[]>(loadRecentEmoji())
-const emojiTabs = computed(() => [{ key: EMOJI_RECENT, name: '最近' }, ...EMOJI_CATEGORIES])
+const stickerInput = ref<HTMLInputElement | null>(null)
+const emojiTabs = computed(() => [
+  { key: 'mine', name: '我的' },
+  { key: EMOJI_RECENT, name: '最近' },
+  ...EMOJI_CATEGORIES,
+])
 const currentEmojis = computed<string[]>(() => {
   if (emojiTab.value === EMOJI_RECENT) return recentEmoji.value
   return EMOJI_CATEGORIES.find((c) => c.key === emojiTab.value)?.emojis ?? []
 })
+
+/** 选择本地图片/GIF 作为自定义表情 */
+function onStickerFile(ev: Event): void {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file) emit('add-sticker', file)
+}
+
+function sendSticker(sticker: { id: string; name: string; url: string }): void {
+  emit('send-sticker', sticker)
+  emojiOpen.value = false
+}
 
 const canSend = computed(() => text.value.trim().length > 0)
 
@@ -117,6 +144,29 @@ function onKeydown(ev: KeyboardEvent): void {
     ev.preventDefault()
     submit()
   }
+}
+
+/** 从剪贴板粘贴图片/文件（截图、复制的图片）直接作为附件发送 */
+function onPaste(ev: ClipboardEvent): void {
+  const items = ev.clipboardData?.items
+  if (!items) return
+  const files: File[] = []
+  for (const item of items) {
+    if (item.kind !== 'file') continue
+    const f = item.getAsFile()
+    if (f && f.size > 0) files.push(f)
+  }
+  if (!files.length) return
+  ev.preventDefault()
+  emit(
+    'send-files',
+    files.map((f) => ({
+      blob: f,
+      name:
+        f.name ||
+        `粘贴图片-${new Date().toISOString().replace(/[:.]/g, '-')}.${f.type === 'image/png' ? 'png' : 'jpg'}`,
+    })),
+  )
 }
 
 function onDragEnter(ev: DragEvent): void {
@@ -199,6 +249,13 @@ onBeforeUnmount(() => {
       hidden
       @change="onFiles"
     />
+    <input
+      ref="stickerInput"
+      type="file"
+      accept="image/png,image/jpeg,image/webp,image/gif,.gif,.png,.jpg,.jpeg,.webp"
+      hidden
+      @change="onStickerFile"
+    />
 
     <div class="bar">
       <div class="emoji-wrap">
@@ -230,7 +287,28 @@ onBeforeUnmount(() => {
                 {{ tab.name }}
               </button>
             </div>
-            <div v-if="currentEmojis.length" class="emoji-grid">
+            <div v-if="emojiTab === 'mine'" class="sticker-grid">
+              <button
+                v-for="st in props.stickers"
+                :key="st.id"
+                type="button"
+                class="sticker-cell"
+                :aria-label="`发送表情 ${st.name}`"
+                @click="sendSticker(st)"
+              >
+                <img :src="st.url" :alt="st.name" loading="lazy" />
+              </button>
+              <button
+                type="button"
+                class="sticker-cell sticker-add"
+                title="上传图片/GIF 作为表情"
+                aria-label="上传自定义表情"
+                @click="stickerInput?.click()"
+              >
+                <Icon name="plus" :size="20" />
+              </button>
+            </div>
+            <div v-else-if="currentEmojis.length" class="emoji-grid">
               <button
                 v-for="e in currentEmojis"
                 :key="e"
@@ -289,6 +367,7 @@ onBeforeUnmount(() => {
         enterkeyhint="send"
         @input="resize"
         @keydown="onKeydown"
+        @paste="onPaste"
       />
 
       <button
@@ -570,6 +649,46 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   font-size: var(--fs-sm);
   text-align: center;
+}
+
+/* ---------- 自定义表情（图片/GIF 贴纸） ---------- */
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: var(--s-1);
+  overflow-y: auto;
+  padding: var(--s-1);
+}
+.sticker-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-hover);
+  cursor: pointer;
+  overflow: hidden;
+}
+.sticker-cell:hover {
+  border-color: var(--accent);
+}
+.sticker-cell img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+}
+.sticker-add {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+.sticker-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* ---------- 手机 ---------- */

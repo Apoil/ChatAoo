@@ -12,6 +12,7 @@ import { ref, shallowRef } from 'vue'
 import { inferKind, inferMime, type ChatSession, type FriendRecord } from '@chataoo/app-core'
 import type { Conversation, Message, Profile } from '@chataoo/shared'
 import type { LanPeerInfo } from '@chataoo/app-core'
+import { loadStickers, saveStickers, sha256OfBlob } from '../emoji'
 
 export const useChatStore = defineStore('chat', () => {
   const session = shallowRef<ChatSession | null>(null)
@@ -26,6 +27,8 @@ export const useChatStore = defineStore('chat', () => {
   const lanPeers = ref<Record<string, LanPeerInfo>>({})
   const activeConversationId = ref<string | null>(null)
   const mediaTick = ref(0)
+  /** 自定义表情（图片/GIF）：面板展示用，url 是可直接渲染的本地 objectURL */
+  const stickers = ref<{ id: string; name: string; url: string }[]>([])
 
   let unsubs: (() => void)[] = []
 
@@ -84,7 +87,69 @@ export const useChatStore = defineStore('chat', () => {
     await refreshFriends()
     await refreshProfiles()
     await refreshConversations()
+    void refreshStickers()
     ready.value = true
+  }
+
+  /** 读取本地自定义表情列表并解析可渲染的 url（优先本地缓存，回退服务器地址） */
+  async function refreshStickers(): Promise<void> {
+    const s = session.value
+    if (!s) return
+    const metas = loadStickers()
+    const out: { id: string; name: string; url: string }[] = []
+    for (const m of metas) {
+      try {
+        out.push({ id: m.id, name: m.name, url: await s.platform.media.url(m.sha256, m.mime) })
+      } catch {
+        if (!m.url) continue
+        // 本地没有缓存：在线时补拉一次
+        try {
+          await s.platform.media.cacheFromUrl(s.absoluteUrl(m.url), m.sha256)
+          out.push({ id: m.id, name: m.name, url: await s.platform.media.url(m.sha256, m.mime) })
+        } catch {
+          out.push({ id: m.id, name: m.name, url: s.absoluteUrl(m.url) })
+        }
+      }
+    }
+    stickers.value = out
+  }
+
+  /** 把用户选中的图片/GIF 加进「我的表情」 */
+  async function addSticker(file: File): Promise<void> {
+    const s = session.value
+    if (!s) return
+    const mime = file.type || (file.name.toLowerCase().endsWith('.gif') ? 'image/gif' : 'image/png')
+    if (!mime.startsWith('image/')) return
+    if (file.size > 5 * 1024 * 1024) throw new Error('表情图片不能超过 5MB')
+    const sha = await sha256OfBlob(file)
+    await s.platform.media.write(sha, file)
+    const list = loadStickers().filter((x) => x.sha256 !== sha)
+    list.unshift({ id: `s_${sha.slice(0, 12)}`, sha256: sha, name: file.name || 'sticker', mime, createdAt: Date.now() })
+    saveStickers(list)
+    await refreshStickers()
+  }
+
+  /** 发送自定义表情：按贴纸消息发送（attachment.sticker = true） */
+  async function sendSticker(st: { id: string; name: string; url: string }): Promise<void> {
+    const s = session.value
+    const active = activeConversationId.value
+    if (!s || !active) return
+    const peer = peerOf(active)
+    if (!peer) return
+    const meta = loadStickers().find((m) => m.id === st.id)
+    if (!meta) return
+    let blob: Blob | null = await s.platform.media.read(meta.sha256).catch(() => null)
+    if (!blob) {
+      try {
+        blob = await (await fetch(st.url)).blob()
+      } catch {
+        return
+      }
+    }
+    if (!blob) return
+    upsertLocalMessage(
+      await s.sendAttachment(peer, { blob, name: meta.name, kind: 'image', mimeType: meta.mime }, { sticker: true }),
+    )
   }
 
   async function refreshFriends(): Promise<void> {
@@ -235,6 +300,7 @@ export const useChatStore = defineStore('chat', () => {
     lanPeers,
     activeConversationId,
     mediaTick,
+    stickers,
     init,
     openConversation,
     refreshConversations,
@@ -244,6 +310,8 @@ export const useChatStore = defineStore('chat', () => {
     isPeerOnline,
     sendText,
     sendFiles,
+    addSticker,
+    sendSticker,
     hideMessage,
     revokeMessage,
     loadHistory,

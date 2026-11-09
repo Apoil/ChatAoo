@@ -88,6 +88,7 @@ export class ChatSession {
     // 有本地身份 + 登录状态 → 直接进入（在线校验失败则自动进入离线模式）
     if (this.identity && this.token) {
       this.authed = true
+      await this.migrateLegacyConversations().catch((e) => console.warn('conversation migration failed:', e))
       await this.startServices().catch((e) => console.warn('services start failed:', e))
     }
   }
@@ -148,6 +149,46 @@ export class ChatSession {
 
   get me(): Identity {
     return this.identity!
+  }
+
+  /**
+   * 迁移历史会话：旧版本的账号 ID 会随「换设备登录」变化，导致同一好友出现多条会话。
+   * 登录后把旧账号 ID 的会话并入当前账号 ID 的规范会话，并修正消息 senderId。
+   */
+  private async migrateLegacyConversations(): Promise<void> {
+    const accountId = this.accountId
+    const friendIds = new Set(
+      (await this.store.friendsList()).filter((f) => f.status === 'friends').map((f) => f.userId),
+    )
+    if (!friendIds.size) return
+    for (const conv of await this.store.convs()) {
+      const parts = conv.id.split('__')
+      if (parts.length !== 2 || parts.includes(accountId)) continue
+      // 只迁移「知道对方是谁」的会话：两段里恰好一段是当前好友
+      const known = parts.filter((p) => p && friendIds.has(p))
+      if (known.length !== 1) continue
+      const peer = known[0]!
+      const oldMe = parts[0] === peer ? parts[1] : parts[0]
+      if (!oldMe || oldMe === peer) continue
+      const target = directConversationId(accountId, peer)
+      const msgs = await this.store.msgsIn(conv.id, Number.MAX_SAFE_INTEGER, 2000)
+      for (const m of msgs) {
+        const senderId = m.senderId === oldMe ? accountId : m.senderId
+        if (m.conversationId === target && senderId === m.senderId) continue
+        await this.store.msgPut({ ...m, conversationId: target, senderId })
+      }
+      await this.store.convDel(conv.id)
+      const targetConv = await this.store.convEnsure(target, peer)
+      const latest = (await this.store.msgsIn(target, Number.MAX_SAFE_INTEGER, 1))[0]
+      if (latest) {
+        targetConv.lastMessageAt = latest.createdAt
+        targetConv.lastMessagePreview = conversationPreview(latest)
+        targetConv.updatedAt = latest.createdAt
+        targetConv.unreadCount = Math.max(targetConv.unreadCount, conv.unreadCount)
+        await this.store.convPut(targetConv)
+      }
+      this.bus.emit('conversations', { conversationId: target })
+    }
   }
 
   /** 数据身份：多设备同账号时消息/好友/会话都用「账号 ID」，局域网信标用设备 ID */
@@ -220,6 +261,7 @@ export class ChatSession {
     })
     this.authed = true
     this.bus.emit('auth', { authed: true })
+    await this.migrateLegacyConversations().catch((e) => console.warn('conversation migration failed:', e))
   }
 
   /** 修改昵称（在线写服务器；离线仅改本地，回连后随资料同步） */
@@ -305,6 +347,7 @@ export class ChatSession {
   async sendAttachment(
     peerId: string,
     file: { blob: Blob; name: string; kind: AttachmentKind; mimeType: string; path?: string },
+    opts?: { sticker?: boolean },
   ): Promise<Message> {
     const media = this.platform.media
     const blob = typedBlob(file.blob, file.mimeType)
@@ -322,6 +365,7 @@ export class ChatSession {
       uploadProgress: 0,
       uploadPhase: 'preparing',
       thumbUrl: URL.createObjectURL(blob),
+      ...(opts?.sticker ? { sticker: true } : {}),
     }
     const msg: Message = {
       id: randomId('m'),
@@ -333,11 +377,7 @@ export class ChatSession {
       status: 'pending',
     }
     await this.store.msgPut(msg)
-    await this.store.convTouch(
-      convId,
-      `[${file.kind === 'file' ? '文件' : file.kind === 'image' ? '图片' : file.kind === 'audio' ? '音频' : '视频'}]`,
-      now,
-    )
+    await this.store.convTouch(convId, opts?.sticker ? '[表情]' : `[${file.kind === 'file' ? '文件' : file.kind === 'image' ? '图片' : file.kind === 'audio' ? '音频' : '视频'}]`, now)
     this.bus.emit('message', msg)
     this.bus.emit('conversations', { conversationId: convId })
 
@@ -607,4 +647,15 @@ function stripClientAttachment(att: Attachment): Attachment {
   delete next.uploadPhase
   if (next.thumbUrl?.startsWith('blob:')) delete next.thumbUrl
   return next
+}
+
+/** 会话列表预览文案 */
+function conversationPreview(m: Message): string {
+  if (m.revoked) return '消息已撤回'
+  if (m.attachment) {
+    if (m.attachment.sticker) return '[表情]'
+    const k = m.attachment.kind
+    return `[${k === 'image' ? '图片' : k === 'video' ? '视频' : k === 'audio' ? '音频' : '文件'}]`
+  }
+  return (m.text ?? '').slice(0, 60)
 }

@@ -16,8 +16,8 @@ import Icon from './Icon.vue'
 import VideoPlayer from './VideoPlayer.vue'
 
 const props = withDefaults(
-  defineProps<{ attachment: Attachment; failed?: boolean; outgoing?: boolean }>(),
-  { failed: false, outgoing: false },
+  defineProps<{ attachment: Attachment; failed?: boolean; outgoing?: boolean; sticker?: boolean }>(),
+  { failed: false, outgoing: false, sticker: false },
 )
 const emit = defineEmits<{ open: [attachment: Attachment]; retry: [] }>()
 const store = useChatStore()
@@ -117,7 +117,7 @@ async function saveFile(): Promise<void> {
 </script>
 
 <template>
-  <div class="attach" :class="`kind-${kind}`">
+  <div class="attach" :class="[`kind-${kind}`, { 'is-sticker': sticker }]">
     <!-- 图片 -->
     <template v-if="kind === 'image'">
       <button
@@ -470,5 +470,18 @@ async function saveFile(): Promise<void> {
     min-height: var(--touch);
     padding: 0 var(--s-3);
   }
+}
+
+/* 自定义表情（图片/GIF 贴纸）：小尺寸、去掉附件外观 */
+.attach.is-sticker .img-btn {
+  min-width: 0;
+  min-height: 0;
+  max-width: 148px;
+  background: transparent;
+}
+.attach.is-sticker .image {
+  max-width: 148px;
+  max-height: 148px;
+  object-fit: contain;
 }
 </style>
