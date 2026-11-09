@@ -523,17 +523,17 @@ interface AuthedReq {
   userId?: string
 }
 
-/** preHandler 认证钩子（注册/登录/静态文件除外） */
+/** preHandler 认证钩子（API 之外的路径——网页版静态资源、/files 静态文件、/health——放行） */
 export function authHook(app: FastifyInstance, db: Db): void {
   app.addHook('preHandler', async (req, reply) => {
     const url = req.url.split('?')[0]!
+    // 网页版页面与其静态资源不走 API 鉴权；WS 自己完成鉴权
+    if (!url.startsWith('/api/')) return
     if (
-      url.startsWith('/files/') ||
       url === '/api/v1/auth/register' ||
       url === '/api/v1/auth/login' ||
       url === '/api/v1/auth/rebind' ||
-      url === '/api/v1/ws' ||
-      url === '/health'
+      url === '/api/v1/ws'
     )
       return
     const token = bearerToken(req)

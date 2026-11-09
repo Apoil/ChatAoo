@@ -10,10 +10,12 @@
 
 - **Windows x64**：`ChatAoo-Setup-1.0.3.exe`（NSIS 安装包，Win10/11）
 - **Android**：`ChatAoo-1.0.3-android-debug.apk`（手机 / 平板同一 APK，Android 6.0+；debug 签名，可自行重新签名）
+- **网页版**：由同步服务器直接托管，浏览器打开服务器地址即可（例如 `https://chat.kanojohina.com`）
 
 ## 核心特性
 
-- **多端**：Windows 桌面端（Electron + Vue 3）、Android 手机端、Android 平板端（Capacitor + Vue 3，自适应布局）
+- **多端**：Windows 桌面端（Electron + Vue 3）、Android 手机端、Android 平板端（Capacitor + Vue 3，自适应布局）、
+  **网页版**（浏览器直接访问，无需安装；媒体缓存走 IndexedDB）
 - **局域网点对点**：UDP 组播信标自动发现同一局域网内的设备（ED25519 签名验证 + 好友白名单门控），
   **完全断网（无互联网）时互为好友的设备之间仍可互发消息与文件**
 - **离线优先**：所有消息/资料/媒体默认先存本地（IndexedDB + 本地媒体缓存），断网不断档；
@@ -32,7 +34,8 @@ packages/
 ├── app-core/   # 跨端业务核心：本地存储、同步引擎、LAN 发现管理器、会话编排
 ├── ui/         # 共享 Vue 组件与主题（消息气泡、头像裁剪、视频播放、好友/会话列表）
 ├── desktop/    # Windows 桌面端（Electron 主进程 + Vite/Vue 渲染进程）
-└── mobile/     # Android 手机/平板端（Capacitor + 自研 UDP/TCP 原生插件）
+├── mobile/     # Android 手机/平板端（Capacitor + 自研 UDP/TCP 原生插件）
+└── web/        # 网页版（Vue 3，构建产物由 server 托管；浏览器不支持局域网直连）
 scripts/        # 图标生成器（纯 Node 零依赖）
 assets/icons/   # 生成的应用图标（PNG/ICO/Android 自适应）
 ```

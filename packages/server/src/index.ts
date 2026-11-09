@@ -4,12 +4,13 @@
  *   - WebSocket：实时消息推送 / 在线状态
  * 用法：CHATAOO_PORT=47800 CHATAOO_DATA=./data pnpm --filter @chataoo/server start
  */
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
+import fastifyStatic from '@fastify/static'
 import websocket from '@fastify/websocket'
 import { APP_VERSION_LABEL, type ClientToServer, type ServerToClient } from '@chataoo/shared'
 import { openDb } from './db.js'
@@ -29,9 +30,21 @@ app.log.info({ dataDir: DATA_DIR }, 'initializing')
 const db = openDb(DATA_DIR)
 const hub = new Hub()
 
+// 网页版静态资源（packages/web/dist）。未构建时只提供 API，不报错。
+const WEB_DIR = process.env.CHATAOO_WEB_DIR
+  ? (isAbsolute(process.env.CHATAOO_WEB_DIR) ? process.env.CHATAOO_WEB_DIR : resolve(process.cwd(), process.env.CHATAOO_WEB_DIR))
+  : join(PKG_DIR, '..', '..', 'web', 'dist')
+const HAS_WEB = existsSync(join(WEB_DIR, 'index.html'))
+
 await app.register(cors, { origin: true })
 await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 1 } })
 await app.register(websocket)
+if (HAS_WEB) {
+  await app.register(fastifyStatic, { root: WEB_DIR, prefix: '/', index: ['index.html'] })
+  app.log.info({ webDir: WEB_DIR }, 'serving web client')
+} else {
+  app.log.warn({ webDir: WEB_DIR }, 'web client not built; API only')
+}
 
 authHook(app, db)
 registerRoutes(app, { db, hub, dataDir: DATA_DIR })
@@ -99,6 +112,19 @@ app.get('/api/v1/ws', { websocket: true }, (socket, req) => {
 })
 
 app.get('/health', async () => ({ ok: true, version: APP_VERSION_LABEL, time: Date.now() }))
+
+/* ---------------- 网页版：SPA 回退 ---------------- */
+
+if (HAS_WEB) {
+  app.get('/', (_req, reply) => reply.sendFile('index.html'))
+  app.setNotFoundHandler((req, reply) => {
+    const url = req.url.split('?')[0] ?? '/'
+    if (req.method === 'GET' && !url.startsWith('/api/') && !url.startsWith('/files/')) {
+      return reply.type('text/html').sendFile('index.html')
+    }
+    return reply.code(404).send({ error: 'not found' })
+  })
+}
 
 try {
   mkdirSync(join(DATA_DIR, 'files', 'm'), { recursive: true })
