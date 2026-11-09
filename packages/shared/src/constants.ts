@@ -1,9 +1,9 @@
 /** 全局常量 */
 
 export const APP_NAME = 'ChatAoo'
-export const APP_VERSION = '1.0.3'
+export const APP_VERSION = '1.1.0'
 /** 界面展示用，首个公开版本 */
-export const APP_VERSION_LABEL = 'Bata 1.0.3'
+export const APP_VERSION_LABEL = 'Bata 1.1.0'
 
 /** 局域网 UDP 组播组（管理员本地管理的地址段 239.255.0.0/16，无需互联网） */
 export const LAN_MULTICAST_GROUP = '239.255.42.77'

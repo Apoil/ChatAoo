@@ -1,21 +1,21 @@
-﻿{
-    "name":  "chataoo",
-    "version":  "1.0.3",
-    "private":  true,
-    "description":  "ChatAoo 鈥?灞€鍩熺綉鐐瑰鐐?+ 绂荤嚎浼樺厛鐨勫绔亰澶╁簲鐢?(Vue 3 / Electron / Capacitor)",
-    "packageManager":  "pnpm@10.33.0",
-    "engines":  {
-                    "node":  "\u003e=20.19"
-                },
-    "scripts":  {
-                    "build":  "pnpm -r --workspace-concurrency=4 build",
-                    "typecheck":  "pnpm -r typecheck",
-                    "dev:server":  "pnpm --filter @chataoo/server dev",
-                    "dev:desktop":  "pnpm --filter @chataoo/desktop dev",
-                    "dev:mobile":  "pnpm --filter @chataoo/mobile dev",
-                    "android:sync":  "pnpm --filter @chataoo/mobile cap:sync",
-                    "android:build":  "pnpm --filter @chataoo/mobile cap:build:apk",
-                    "dist:desktop":  "pnpm --filter @chataoo/desktop dist",
-                    "dev:web":  "pnpm --filter @chataoo/web dev"
-                }
+{
+  "name": "chataoo",
+  "version": "1.1.0",
+  "private": true,
+  "description": "ChatAoo 鈥?灞€鍩熺綉鐐瑰鐐?+ 绂荤嚎浼樺厛鐨勫绔亰澶╁簲鐢?(Vue 3 / Electron / Capacitor)",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=4 build",
+    "typecheck": "pnpm -r typecheck",
+    "dev:server": "pnpm --filter @chataoo/server dev",
+    "dev:desktop": "pnpm --filter @chataoo/desktop dev",
+    "dev:mobile": "pnpm --filter @chataoo/mobile dev",
+    "android:sync": "pnpm --filter @chataoo/mobile cap:sync",
+    "android:build": "pnpm --filter @chataoo/mobile cap:build:apk",
+    "dist:desktop": "pnpm --filter @chataoo/desktop dist",
+    "dev:web": "pnpm --filter @chataoo/web dev"
+  }
 }
