@@ -344,6 +344,7 @@ watch(
               @send-files="(f) => store.sendFiles(f)"
               @send-sticker="(s) => store.sendSticker(s)"
               @add-sticker="(f) => store.addSticker(f)"
+              @remove-sticker="(s) => store.removeSticker(s)"
             />
           </template>
           <div v-else class="chat-empty">

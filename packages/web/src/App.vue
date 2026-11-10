@@ -503,6 +503,7 @@ watch(
               @send-files="onSendFiles"
               @send-sticker="(s) => store.sendSticker(s)"
               @add-sticker="(f) => store.addSticker(f)"
+              @remove-sticker="(s) => store.removeSticker(s)"
             />
           </div>
         </template>

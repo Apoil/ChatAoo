@@ -29,6 +29,7 @@ const emit = defineEmits<{
   'send-files': [files: { blob: Blob; name: string }[]]
   'send-sticker': [sticker: { id: string; name: string; url: string }]
   'add-sticker': [file: File]
+  'remove-sticker': [sticker: { id: string; name: string; url: string }]
 }>()
 
 const MIN_H = 40
@@ -288,16 +289,25 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <div v-if="emojiTab === 'mine'" class="sticker-grid">
-              <button
-                v-for="st in props.stickers"
-                :key="st.id"
-                type="button"
-                class="sticker-cell"
-                :aria-label="`发送表情 ${st.name}`"
-                @click="sendSticker(st)"
-              >
-                <img :src="st.url" :alt="st.name" loading="lazy" />
-              </button>
+              <div v-for="st in props.stickers" :key="st.id" class="sticker-item">
+                <button
+                  type="button"
+                  class="sticker-cell"
+                  :aria-label="`发送表情 ${st.name}`"
+                  @click="sendSticker(st)"
+                >
+                  <img :src="st.url" :alt="st.name" loading="lazy" />
+                </button>
+                <button
+                  type="button"
+                  class="sticker-del"
+                  title="删除这个表情"
+                  :aria-label="`删除表情 ${st.name}`"
+                  @click.stop="emit('remove-sticker', st)"
+                >
+                  <Icon name="close" :size="12" />
+                </button>
+              </div>
               <button
                 type="button"
                 class="sticker-cell sticker-add"
@@ -671,6 +681,44 @@ onBeforeUnmount(() => {
   background: var(--bg-hover);
   cursor: pointer;
   overflow: hidden;
+}
+.sticker-item {
+  position: relative;
+}
+/* 删除按钮：桌面 hover/focus 时出现，触摸设备常显 */
+.sticker-del {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.sticker-item:hover .sticker-del,
+.sticker-item:focus-within .sticker-del {
+  opacity: 1;
+}
+.sticker-del:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+@media (pointer: coarse) {
+  .sticker-del {
+    opacity: 1;
+    width: 26px;
+    height: 26px;
+  }
 }
 .sticker-cell:hover {
   border-color: var(--accent);

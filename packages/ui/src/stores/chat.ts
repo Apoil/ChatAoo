@@ -129,6 +129,12 @@ export const useChatStore = defineStore('chat', () => {
     await refreshStickers()
   }
 
+  /** 从「我的表情」里删除一个（只删索引，不删媒体缓存，已发送的贴纸消息不受影响） */
+  async function removeSticker(st: { id: string }): Promise<void> {
+    saveStickers(loadStickers().filter((m) => m.id !== st.id))
+    await refreshStickers()
+  }
+
   /** 发送自定义表情：按贴纸消息发送（attachment.sticker = true） */
   async function sendSticker(st: { id: string; name: string; url: string }): Promise<void> {
     const s = session.value
@@ -311,6 +317,7 @@ export const useChatStore = defineStore('chat', () => {
     sendText,
     sendFiles,
     addSticker,
+    removeSticker,
     sendSticker,
     hideMessage,
     revokeMessage,
