@@ -30,12 +30,14 @@ import {
   ProfilePage,
   SettingsSheet,
   useChatStore,
+  useNotifications,
   type IconName,
 } from '@chataoo/ui'
 import type { Attachment } from '@chataoo/shared'
 
 const session = inject<ChatSession>('session')!
 const store = useChatStore()
+useNotifications(store)
 
 /** store.init 落定之前先不渲染外壳：否则已登录用户每次冷启动会闪一下登录页 */
 const booting = ref(true)

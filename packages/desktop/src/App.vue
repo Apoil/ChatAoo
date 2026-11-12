@@ -23,6 +23,7 @@ import {
   SettingsSheet,
   THEME_CHROME,
   useChatStore,
+  useNotifications,
   useTheme,
 } from '@chataoo/ui'
 import type { IconName, ThemeMode } from '@chataoo/ui'
@@ -31,6 +32,7 @@ type Tab = 'chats' | 'friends' | 'profile'
 
 const session = inject<ChatSession>('session')!
 const store = useChatStore()
+useNotifications(store)
 const { mode, resolved, cycle } = useTheme()
 
 const tab = ref<Tab>('chats')

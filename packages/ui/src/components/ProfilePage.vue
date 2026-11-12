@@ -3,6 +3,13 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { APP_VERSION_LABEL, type Profile } from '@chataoo/shared'
 import { useChatStore } from '../stores/chat'
 import { useTheme, type ThemeMode } from '../theme'
+import {
+  enableNotifications,
+  notifyEnabled,
+  notifyPermission,
+  notifySupported,
+  setNotificationsEnabled,
+} from '../notify'
 import Avatar from './Avatar.vue'
 import AvatarCropper from './AvatarCropper.vue'
 import Icon from './Icon.vue'
@@ -15,6 +22,12 @@ const props = defineProps<{ peerId?: string; showBack?: boolean }>()
 const emit = defineEmits<{ close: []; openChat: [peerId: string] }>()
 const store = useChatStore()
 const { mode, setMode } = useTheme()
+
+/** 申请系统通知权限（必须在用户手势里调用） */
+async function askNotify(): Promise<void> {
+  if (!notifySupported) return
+  await enableNotifications()
+}
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; icon: 'sun' | 'moon' | 'monitor' }[] = [
   { value: 'light', label: '浅色', icon: 'sun' },
@@ -267,6 +280,47 @@ onBeforeUnmount(() => {
                 <span>{{ opt.label }}</span>
               </button>
             </div>
+          </section>
+
+          <section class="card">
+            <h3 class="card-title">通知</h3>
+            <template v-if="!notifySupported">
+              <p class="notify-note">
+                当前环境不支持系统通知（网页版在浏览器里可以开启；手机 App 的系统推送暂未接入）。
+              </p>
+            </template>
+            <template v-else-if="notifyPermission === 'granted'">
+              <div class="notify-row">
+                <div class="notify-copy">
+                  <span class="notify-title">桌面通知</span>
+                  <span class="notify-note">
+                    窗口在后台（切到别的标签/最小化）时，新消息会弹出系统通知，点击直接回到会话。
+                  </span>
+                </div>
+                <button
+                  class="switch"
+                  type="button"
+                  role="switch"
+                  :aria-checked="notifyEnabled"
+                  :class="{ on: notifyEnabled }"
+                  :aria-label="notifyEnabled ? '关闭桌面通知' : '开启桌面通知'"
+                  @click="setNotificationsEnabled(!notifyEnabled)"
+                >
+                  <span class="knob" aria-hidden="true" />
+                </button>
+              </div>
+            </template>
+            <template v-else-if="notifyPermission === 'denied'">
+              <p class="notify-note">
+                通知已被浏览器拒绝。点地址栏左侧的站点图标 → 把「通知」改成「允许」，再刷新页面即可。
+              </p>
+            </template>
+            <template v-else>
+              <p class="notify-note">开启后，窗口在后台时新消息会弹出系统通知。</p>
+              <button class="btn btn-primary notify-ask" type="button" @click="askNotify">
+                开启桌面通知
+              </button>
+            </template>
           </section>
 
           <section class="card">
@@ -644,6 +698,74 @@ onBeforeUnmount(() => {
 .open-chat {
   margin-top: var(--s-3);
   min-height: var(--touch);
+}
+
+/* ---------- 通知 ---------- */
+.notify-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  justify-content: space-between;
+}
+.notify-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.notify-title {
+  font-size: var(--fs-base);
+  color: var(--text);
+}
+.notify-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+}
+.notify-ask {
+  margin-top: var(--s-3);
+  min-height: var(--touch);
+}
+.switch {
+  flex: none;
+  width: 48px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-hover);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.switch .knob {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 160ms ease;
+}
+.switch.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch.on .knob {
+  transform: translateX(20px);
+}
+@media (pointer: coarse) {
+  .switch {
+    width: 52px;
+    height: 32px;
+  }
+  .switch .knob {
+    width: 26px;
+    height: 26px;
+  }
+  .switch.on .knob {
+    transform: translateX(20px);
+  }
 }
 @media (max-width: 719.98px) {
   .body {

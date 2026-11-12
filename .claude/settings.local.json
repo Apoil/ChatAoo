@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"=== exit: $?\")",
+      "Bash(pnpm -r --workspace-concurrency=4 typecheck)",
+      "Bash(node -e \"const fs=require\\('fs'\\);const b=fs.readFileSync\\('package.json'\\);console.log\\(b.slice\\(0,200\\).toString\\('utf8'\\)\\);try{console.log\\(JSON.parse\\(b.toString\\('utf8'\\)\\).description\\)}catch\\(e\\){console.log\\('parse err',e.message\\)}\")"
+    ]
+  }
+}

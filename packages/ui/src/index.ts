@@ -15,6 +15,14 @@ export { default as ProfilePage } from './components/ProfilePage.vue'
 export { default as SettingsSheet } from './components/SettingsSheet.vue'
 export { default as EmptyState } from './components/EmptyState.vue'
 export { useChatStore } from './stores/chat.js'
+export {
+  useNotifications,
+  enableNotifications,
+  setNotificationsEnabled,
+  notifyEnabled,
+  notifyPermission,
+  notifySupported,
+} from './notify.js'
 export { initTheme, useTheme, setThemeMode, cycleThemeMode, THEME_CHROME } from './theme.js'
 export type { ThemeMode, ResolvedTheme } from './theme.js'
 export { default as logoUrl } from './logo.svg'
